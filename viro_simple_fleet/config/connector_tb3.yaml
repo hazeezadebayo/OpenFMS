@@ -1,0 +1,163 @@
+mqtt_bridge:
+  ros__parameters:
+    mqtt_address: "localhost"
+    mqtt_port: 1883
+    mqtt_username: ""
+    mqtt_password: ""
+    manufacturer_name: "birfen"
+    serial_number: "TB3_2"
+    # interface_name: "lonely"
+    # major_version: "v2"
+
+controller:
+  ros__parameters:
+    robot_name: "TB3_2"
+    manufacturer_name: "birfen"
+    serial_number: "TB3_2"
+    # interface_name: "lonely"
+    # major_version: "v2"
+
+tb3_adapter:
+  ros__parameters:
+    robot_name: "TB3_2"
+    manufacturer_name: "birfen"
+    serial_number: "TB3_2"
+    # interface_name: "lonely"
+    # major_version: "v2"
+
+# mosquitto_pub -h localhost -p 1883 -t kullar/v1/birfen/TB3_1/order -m '
+# {
+#     "orderId": "'$(cat /proc/sys/kernel/random/uuid)'",
+#     "orderUpdateId": 0,
+#     "version": "2.0.0",
+#     "manufacturer": "birfen",
+#     "serialNumber": "TB3_1",
+#     "nodes": [
+#         {
+#             "nodeId": "node1",
+#             "released": true,
+#             "sequenceId": 0,
+#             "nodePosition": {
+#                 "x": 0.9145335555076599,
+#                 "y": -0.04533608630299568,
+#                 "theta": -0.66,
+#                 "mapId": "map"
+#             },
+#             "actions": []
+#         },
+#         {
+#             "nodeId": "node2",
+#             "released": true,
+#             "sequenceId": 2,
+#             "nodePosition": {
+#                 "x": 2.6717987060546875,
+#                 "y": -0.017014171928167343,
+#                 "theta": 0.0,
+#                 "mapId": "map"
+#             },
+#             "actions": [
+#                 {
+#                     "actionType": "beep",
+#                     "actionId": "'$(cat /proc/sys/kernel/random/uuid)'",
+#                     "actionDescription": "Make a beep noise on node",
+#                     "blockingType": "NONE",
+#                     "actionParameters": []
+#                 }
+#             ]
+#         },
+#         {
+#             "nodeId": "node3",
+#             "released": true,
+#             "sequenceId": 4,
+#             "nodePosition": {
+#                 "x": 2.615116834640503,
+#                 "y": 1.065126895904541,
+#                 "theta": 0.0,
+#                 "mapId": "map"
+#             },
+#             "actions": [
+#                 {
+#                     "actionType": "beep",
+#                     "actionId": "'$(cat /proc/sys/kernel/random/uuid)'",
+#                     "actionDescription": "Make a beep noise on node",
+#                     "blockingType": "NONE",
+#                     "actionParameters": []
+#                 }
+#             ]
+#         },
+#         {
+#             "nodeId": "node4",
+#             "released": true,
+#             "sequenceId": 6,
+#             "nodePosition": {
+#                 "x": 0.7047995328903198,
+#                 "y": 1.0481370687484741,
+#                 "theta": -2.6,
+#                 "mapId": "map"
+#             },
+#             "actions": [
+#                 {
+#                     "actionType": "beep",
+#                     "actionId": "'$(cat /proc/sys/kernel/random/uuid)'",
+#                     "actionDescription": "Make a beep noise on node",
+#                     "blockingType": "NONE",
+#                     "actionParameters": []
+#                 }
+#             ]
+#         },
+#         {
+#             "nodeId": "node1",
+#             "released": true,
+#             "sequenceId": 8,
+#             "nodePosition": {
+#                 "x": 0.9145335555076599,
+#                 "y": -0.04533608630299568,
+#                 "theta": -0.66,
+#                 "mapId": "map"
+#             },
+#             "actions": [
+#                 {
+#                     "actionType": "beep",
+#                     "actionId": "'$(cat /proc/sys/kernel/random/uuid)'",
+#                     "actionDescription": "Make a beep noise on node",
+#                     "blockingType": "NONE",
+#                     "actionParameters": []
+#                 }
+#             ]
+#         }
+#     ],
+#     "edges": [
+#         {
+#             "edgeId": "edge1",
+#             "released": true,
+#             "sequenceId": 1,
+#             "startNodeId": "node1",
+#             "endNodeId": "node2",
+#             "actions": []
+#         },
+#         {
+#             "edgeId": "edge2",
+#             "released": true,
+#             "sequenceId": 3,
+#             "startNodeId": "node2",
+#             "endNodeId": "node3",
+#             "actions": []
+#         },
+#         {
+#             "edgeId": "edge3",
+#             "released": true,
+#             "sequenceId": 5,
+#             "startNodeId": "node3",
+#             "endNodeId": "node4",
+#             "actions": []
+#         },
+#         {
+#             "edgeId": "edge4",
+#             "released": true,
+#             "sequenceId": 7,
+#             "startNodeId": "node4",
+#             "endNodeId": "node1",
+#             "actions": []
+#         }
+#     ]
+# }'
