@@ -299,10 +299,6 @@ class TestFleetManager:
         theta = 2 * math.atan2(z, w)
         return [x, y, theta]
 
-    # def tearDown(self):
-    #     """ close the db """
-    #     db_mngr.conn.close()
-
 
 if __name__ == '__main__':
 
