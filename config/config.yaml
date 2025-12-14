@@ -1,0 +1,869 @@
+mqtt:
+  broker_address: "localhost"
+  broker_port: 1883
+  keep_alive: 15
+
+fleet_info:
+  fleetname: "kullar"
+  version: "2.0.0"
+  versions: "v2"
+  manufacturer: "birfen"
+
+postgres:
+  host: "localhost" # "192.168.1.91"
+  port: "5432" # 5432
+  database: "postgres" # "fleet_db"
+  user: "postgres"
+  password: "root" # "Birfen2021*"
+
+twilio_server:
+  send_sms: "false"             # bool - wether or not to send sms
+  account_sid: "xxxxxx"         # your twilio sid
+  auth_token: "xxxxx"           # your twilio token
+  from_number: "+1xxxxxxxxx"    # your twilio number
+  to_number: "+90blahblahblah"  # the operations center number
+
+graph:
+
+# LINE 1
+
+  C9:
+  - - C1
+    - 0.1
+
+  C1:
+  - - C9
+    - 0.1
+  - - C2
+    - 0.1
+  - - C5
+    - 0.1
+  - - C25
+    - 0.1
+  - - W1
+    - 0.1
+
+  C2:
+  - - C1
+    - 0.1
+  - - C3
+    - 0.1
+  - - C26
+    - 0.1
+  - - C6
+    - 0.1
+  - - W2
+    - 0.1
+
+  C3:
+  - - C2
+    - 0.1
+  - - C4
+    - 0.1
+  - - C27
+    - 0.1
+  - - C7
+    - 0.1
+  - - W3
+    - 0.1
+
+  C4:
+  - - C10
+    - 0.1
+  - - C3
+    - 0.1
+  - - C28
+    - 0.1
+  - - C8
+    - 0.1
+  - - W4
+    - 0.1
+
+  C10:
+  - - C4
+    - 0.1
+
+# LINE 2
+
+  C11:
+  - - C5
+    - 0.1
+
+  C5:
+  - - C11
+    - 0.1
+  - - C6
+    - 0.1
+  - - C1
+    - 0.1
+  - - W5
+    - 0.1
+
+  C6:
+  - - C5
+    - 0.1
+  - - C7
+    - 0.1
+  - - C2
+    - 0.1
+  - - C14
+    - 0.1
+  - - W6
+    - 0.1
+
+  C7:
+  - - C6
+    - 0.1
+  - - C8
+    - 0.1
+  - - C3
+    - 0.1
+  - - C15
+    - 0.1
+  - - W7
+    - 0.1
+
+  C8:
+  - - C12
+    - 0.1
+  - - C7
+    - 0.1
+  - - C4
+    - 0.1
+  - - W8
+    - 0.1
+
+  C12:
+  - - C8
+    - 0.1
+
+# LINE 3
+
+
+# LINE 4
+
+  C21:
+  - - C13
+    - 0.1
+
+  C13:
+  - - C21
+    - 0.1
+  - - C14
+    - 0.1
+  - - C17
+    - 0.1
+  - - W13
+    - 0.1
+
+  C14:
+  - - C6
+    - 0.1
+  - - C13
+    - 0.1
+  - - C15
+    - 0.1
+  - - C18
+    - 0.1
+  - - W14
+    - 0.1
+
+  C15:
+  - - C7
+    - 0.1
+  - - C14
+    - 0.1
+  - - C16
+    - 0.1
+  - - C19
+    - 0.1
+  - - W15
+    - 0.1
+
+  C16:
+  - - C15
+    - 0.1
+  - - C22
+    - 0.1
+  - - C20
+    - 0.1
+  - - W16
+    - 0.1
+
+  C22:
+  - - C16
+    - 0.1
+
+# LINE 5
+
+  C23:
+  - - C17
+    - 0.1
+
+  C17:
+  - - C31
+    - 0.1
+  - - C23
+    - 0.1
+  - - C13
+    - 0.1
+  - - C18
+    - 0.1
+  - - W17
+    - 0.1
+
+  C18:
+  - - C14
+    - 0.1
+  - - C17
+    - 0.1
+  - - C19
+    - 0.1
+  - - C29
+    - 0.1
+  - - W18
+    - 0.1
+
+  C19:
+  - - C15
+    - 0.1
+  - - C18
+    - 0.1
+  - - C20
+    - 0.1
+  - - C30
+    - 0.1
+  - - W19
+    - 0.1
+
+  C20:
+  - - C32
+    - 0.1
+  - - C24
+    - 0.1
+  - - C16
+    - 0.1
+  - - C19
+    - 0.1
+  - - W20
+    - 0.1
+
+  C24:
+  - - C20
+    - 0.1
+
+# LINE 6
+
+  C29:
+  - - C18
+    - 0.1
+
+  C30:
+  - - C19
+    - 0.1
+
+  C31:
+  - - C17
+    - 0.1
+
+  C32:
+  - - C20
+    - 0.1
+
+# LINE 6
+
+  C25:
+  - - C1
+    - 0.1
+
+  C26:
+  - - C2
+    - 0.1
+
+  C27:
+  - - C3
+    - 0.1
+
+  C28:
+  - - C4
+    - 0.1
+
+# LINE 2 WAITPOINTS
+
+  W5:
+  - - C5
+    - 0.1
+  W6:
+  - - C6
+    - 0.1
+  W7:
+  - - C7
+    - 0.1
+  W8:
+  - - C8
+    - 0.1
+
+# LINE 3 WAITPOINTS
+
+# LINE 4 WAITPOINTS
+
+  W13:
+  - - C13
+    - 0.1
+  W14:
+  - - C14
+    - 0.1
+  W15:
+  - - C15
+    - 0.1
+  W16:
+  - - C16
+    - 0.1
+
+# LINE 5 WAITPOINTS
+
+  W17:
+  - - C17
+    - 0.1
+  W18:
+  - - C18
+    - 0.1
+  W19:
+  - - C19
+    - 0.1
+  W20:
+  - - C20
+    - 0.1
+
+## station_dock # checkpoint # charge_dock # home_dock # door # elevator
+
+itinerary:
+
+# LINE 1 CHECKPOINT PROPERTIES
+
+- coordinate:
+  - 0.0
+  - -3.0
+  - -0.194
+  - 0.98
+  description: station_dock
+  fleet_id: kullar
+  map_id: bina_1_floor_0
+  loc_id: C9
+
+- coordinate:
+  - 0.0
+  - 0.0
+  - -0.194
+  - 0.98
+  description: checkpoint
+  fleet_id: kullar
+  map_id: bina_1_floor_0
+  loc_id: C1
+
+- coordinate:
+  - 0.0
+  - 3.0
+  - -0.097
+  - 0.995
+  description: checkpoint
+  fleet_id: kullar
+  map_id: bina_1_floor_0
+  loc_id: C2
+
+- coordinate:
+  - 0.0
+  - 6.0
+  - -0.097
+  - 0.995
+  description: checkpoint
+  fleet_id: kullar
+  map_id: bina_1_floor_0
+  loc_id: C3
+
+- coordinate:
+  - 0.0
+  - 9.0
+  - -0.097
+  - 0.995
+  description: checkpoint
+  fleet_id: kullar
+  map_id: bina_1_floor_0
+  loc_id: C4
+
+- coordinate:
+  - 0.0
+  - 12.0
+  - -0.194
+  - 0.98
+  description: station_dock
+  fleet_id: kullar
+  map_id: bina_1_floor_0
+  loc_id: C10
+
+# LINE 2 CHECKPOINT PROPERTIES
+
+- coordinate:
+  - 3.0
+  - -3.0
+  - -0.194
+  - 0.98
+  description: station_dock
+  fleet_id: kullar
+  map_id: bina_1_floor_0
+  loc_id: C11
+
+- coordinate:
+  - 3.0
+  - 0.0
+  - -0.194
+  - 0.98
+  description: checkpoint
+  fleet_id: kullar
+  map_id: bina_1_floor_0
+  loc_id: C5
+
+- coordinate:
+  - 3.0
+  - 3.0
+  - -0.097
+  - 0.995
+  description: checkpoint
+  fleet_id: kullar
+  map_id: bina_1_floor_0
+  loc_id: C6
+
+- coordinate:
+  - 3.0
+  - 6.0
+  - -0.097
+  - 0.995
+  description: checkpoint
+  fleet_id: kullar
+  map_id: bina_1_floor_0
+  loc_id: C7
+
+- coordinate:
+  - 3.0
+  - 9.0
+  - -0.097
+  - 0.995
+  description: checkpoint
+  fleet_id: kullar
+  map_id: bina_1_floor_0
+  loc_id: C8
+
+- coordinate:
+  - 3.0
+  - 12.0
+  - -0.194
+  - 0.98
+  description: station_dock
+  fleet_id: kullar
+  map_id: bina_1_floor_0
+  loc_id: C12
+
+# LINE 3 CHECKPOINT PROPERTIES
+
+
+# LINE 4 CHECKPOINT PROPERTIES
+
+- coordinate:
+  - 9.0
+  - -3.0
+  - -0.194
+  - 0.98
+  description: station_dock
+  fleet_id: kullar
+  map_id: bina_1_floor_0
+  loc_id: C21
+
+- coordinate:
+  - 9.0
+  - 0.0
+  - -0.194
+  - 0.98
+  description: checkpoint
+  fleet_id: kullar
+  map_id: bina_1_floor_0
+  loc_id: C13
+
+- coordinate:
+  - 9.0
+  - 3.0
+  - -0.097
+  - 0.995
+  description: checkpoint
+  fleet_id: kullar
+  map_id: bina_1_floor_0
+  loc_id: C14
+
+- coordinate:
+  - 9.0
+  - 6.0
+  - -0.097
+  - 0.995
+  description: checkpoint
+  fleet_id: kullar
+  map_id: bina_1_floor_0
+  loc_id: C15
+
+- coordinate:
+  - 9.0
+  - 9.0
+  - -0.097
+  - 0.995
+  description: checkpoint
+  fleet_id: kullar
+  map_id: bina_1_floor_0
+  loc_id: C16
+
+- coordinate:
+  - 9.0
+  - 12.0
+  - -0.194
+  - 0.98
+  description: station_dock
+  fleet_id: kullar
+  map_id: bina_1_floor_0
+  loc_id: C22
+
+# LINE 5 CHECKPOINT PROPERTIES
+
+- coordinate:
+  - 12.0
+  - -3.0
+  - -0.194
+  - 0.98
+  description: station_dock
+  fleet_id: kullar
+  map_id: bina_1_floor_0
+  loc_id: C23
+
+- coordinate:
+  - 12.0
+  - 0.0
+  - -0.194
+  - 0.98
+  description: checkpoint
+  fleet_id: kullar
+  map_id: bina_1_floor_0
+  loc_id: C17
+
+- coordinate:
+  - 12.0
+  - 3.0
+  - -0.097
+  - 0.995
+  description: checkpoint
+  fleet_id: kullar
+  map_id: bina_1_floor_0
+  loc_id: C18
+
+- coordinate:
+  - 12.0
+  - 6.0
+  - -0.097
+  - 0.995
+  description: checkpoint
+  fleet_id: kullar
+  map_id: bina_1_floor_0
+  loc_id: C19
+
+- coordinate:
+  - 12.0
+  - 9.0
+  - -0.097
+  - 0.995
+  description: checkpoint
+  fleet_id: kullar
+  map_id: bina_1_floor_0
+  loc_id: C20
+
+- coordinate:
+  - 12.0
+  - 12.0
+  - -0.097
+  - 0.995
+  description: charge_dock
+  fleet_id: kullar
+  map_id: bina_1_floor_0
+  loc_id: C24
+
+# LINE 6 CHECKPOINT PROPERTIES
+
+- coordinate:
+  - 15.0
+  - 3.0
+  - -0.097
+  - 0.995
+  description: station_dock # home_dock
+  fleet_id: kullar
+  map_id: bina_1_floor_0
+  loc_id: C29
+
+- coordinate:
+  - 15.0
+  - 6.0
+  - -0.097
+  - 0.995
+  description: station_dock # home_dock
+  fleet_id: kullar
+  map_id: bina_1_floor_0
+  loc_id: C30
+
+- coordinate:
+  - 15.0
+  - 0.0
+  - -0.097
+  - 0.995
+  description: station_dock # home_dock
+  fleet_id: kullar
+  map_id: bina_1_floor_0
+  loc_id: C31
+
+- coordinate:
+  - 15.0
+  - 9.0
+  - -0.097
+  - 0.995
+  description: station_dock # home_dock
+  fleet_id: kullar
+  map_id: bina_1_floor_0
+  loc_id: C32
+
+
+# LINE 0 CHECKPOINT PROPERTIES
+
+- coordinate:
+  - -3.0
+  - 0.0
+  - -0.194
+  - 0.98
+  description: home_dock
+  fleet_id: kullar
+  map_id: bina_1_floor_0
+  loc_id: C25
+
+- coordinate:
+  - -3.0
+  - 3.0
+  - -0.097
+  - 0.995
+  description: home_dock
+  fleet_id: kullar
+  map_id: bina_1_floor_0
+  loc_id: C26
+
+- coordinate:
+  - -3.0
+  - 6.0
+  - -0.097
+  - 0.995
+  description: home_dock
+  fleet_id: kullar
+  map_id: bina_1_floor_0
+  loc_id: C27
+
+- coordinate:
+  - -3.0
+  - 9.0
+  - -0.097
+  - 0.995
+  description: home_dock
+  fleet_id: kullar
+  map_id: bina_1_floor_0
+  loc_id: C28
+
+
+
+
+
+
+### WAITPOINTS
+
+# LINE 1
+
+- coordinate:
+  - 0.3
+  - 0.3
+  - -0.194
+  - 0.98
+  description: waitpoint
+  fleet_id: kullar
+  map_id: bina_1_floor_0
+  loc_id: W1
+
+- coordinate:
+  - 0.3
+  - 3.3
+  - -0.097
+  - 0.995
+  description: waitpoint
+  fleet_id: kullar
+  map_id: bina_1_floor_0
+  loc_id: W2
+
+- coordinate:
+  - 0.3
+  - 6.3
+  - -0.097
+  - 0.995
+  description: waitpoint
+  fleet_id: kullar
+  map_id: bina_1_floor_0
+  loc_id: W3
+
+- coordinate:
+  - 0.3
+  - 9.3
+  - -0.695
+  - 0.718
+  description: waitpoint
+  fleet_id: kullar
+  map_id: bina_1_floor_0
+  loc_id: W4
+
+# LINE 2
+
+- coordinate:
+  - 3.3
+  - 0.3
+  - -0.194
+  - 0.98
+  description: waitpoint
+  fleet_id: kullar
+  map_id: bina_1_floor_0
+  loc_id: W5
+
+- coordinate:
+  - 3.3
+  - 3.3
+  - -0.097
+  - 0.995
+  description: waitpoint
+  fleet_id: kullar
+  map_id: bina_1_floor_0
+  loc_id: W6
+
+- coordinate:
+  - 3.3
+  - 6.3
+  - -0.097
+  - 0.995
+  description: waitpoint
+  fleet_id: kullar
+  map_id: bina_1_floor_0
+  loc_id: W7
+
+- coordinate:
+  - 3.3
+  - 9.3
+  - -0.695
+  - 0.718
+  description: waitpoint
+  fleet_id: kullar
+  map_id: bina_1_floor_0
+  loc_id: W8
+
+# LINE 3
+
+# LINE 4
+
+- coordinate:
+  - 9.3
+  - 0.3
+  - -0.194
+  - 0.98
+  description: waitpoint
+  fleet_id: kullar
+  map_id: bina_1_floor_0
+  loc_id: W13
+
+- coordinate:
+  - 9.3
+  - 3.3
+  - -0.097
+  - 0.995
+  description: waitpoint
+  fleet_id: kullar
+  map_id: bina_1_floor_0
+  loc_id: W14
+
+- coordinate:
+  - 9.3
+  - 6.3
+  - -0.097
+  - 0.995
+  description: waitpoint
+  fleet_id: kullar
+  map_id: bina_1_floor_0
+  loc_id: W15
+
+- coordinate:
+  - 9.3
+  - 9.3
+  - -0.695
+  - 0.718
+  description: waitpoint
+  fleet_id: kullar
+  map_id: bina_1_floor_0
+  loc_id: W16
+
+# LINE 5
+
+- coordinate:
+  - 12.3
+  - 0.3
+  - -0.194
+  - 0.98
+  description: waitpoint
+  fleet_id: kullar
+  map_id: bina_1_floor_0
+  loc_id: W17
+
+- coordinate:
+  - 12.3
+  - 3.3
+  - -0.097
+  - 0.995
+  description: waitpoint
+  fleet_id: kullar
+  map_id: bina_1_floor_0
+  loc_id: W18
+
+- coordinate:
+  - 12.3
+  - 6.3
+  - -0.097
+  - 0.995
+  description: waitpoint
+  fleet_id: kullar
+  map_id: bina_1_floor_0
+  loc_id: W19
+
+- coordinate:
+  - 12.3
+  - 9.3
+  - -0.695
+  - 0.718
+  description: waitpoint
+  fleet_id: kullar
+  map_id: bina_1_floor_0
+  loc_id: W20
+
+## MAPS
+maps:
+  kullar:
+  - - map_id: bina_1_floor_0
+      map_pgm_path: /home/hazeezadebayo/Desktop/fleet_management_v5/fleet_management/config/turtlebot3_world.pgm
+      map_yaml_path: /home/hazeezadebayo/Desktop/fleet_management_v5/fleet_management/config/turtlebot3_world.yaml
+    - map_id: bina_1_floor_1
+      map_pgm_path: /home/hazeezadebayo/Desktop/fleet_management_v5/fleet_management/config/turtlebot3_world.pgm
+      map_yaml_path: /home/hazeezadebayo/Desktop/fleet_management_v5/fleet_management/config/turtlebot3_world.yaml
+
+## ABOUT
+organization: BIRFEN
+programmer: Azeez Adebayo
+project_date: 2024
+website: https://www.linkedin.com/in/hazeezadebayo/
