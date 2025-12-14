@@ -1,3 +1,7 @@
-paho-mqtt==1.6.1
-PyYAML==6.0.1
-jsonschema==4.19.0
+psycopg2-binary>=2.9.0
+PyYAML>=6.0
+paho-mqtt>=1.6.1
+jsonschema>=4.0.0
+numpy>=1.21.0
+scikit-fuzzy>=0.4.2
+twilio>=8.0.0
