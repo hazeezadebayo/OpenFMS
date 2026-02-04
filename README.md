@@ -107,7 +107,11 @@ docker exec -it openfms-db-1 psql -U postgres -d postgres -c "SELECT * FROM stat
 The easiest way to run OpenFMS along with all its dependencies (PostgreSQL, Mosquitto MQTT) is using Docker Compose.
 
 ### 1. Build and Run
-From the root of the repository, execute:
+The simplest way to start the environment is using the provided startup script:
+```bash
+bash run_openfms.sh
+```
+Alternatively, using direct Docker commands:
 ```bash
 docker compose build
 docker compose up -d
