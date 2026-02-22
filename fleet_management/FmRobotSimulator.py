@@ -7,6 +7,8 @@ import random
 import math
 import re
 import os
+import yaml
+
 
 # mosquitto_sub -h localhost -p 1883 -t kullar/v2/birfen/AGV-002/state
 # mosquitto_sub -h localhost -p 1883 -t kullar/v2/birfen/AGV-002/factsheet
@@ -817,71 +819,113 @@ class Robot():
         # Create a separate thread for each timer
         threading.Thread(target=timer_thread, daemon=True).start()
 
+def load_robots_custom(filepath):
+    """Simple parser for robots.yaml (list of dicts)."""
+    robots = []
+    current_robot = None
+    try:
+        with open(filepath, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                if line == "-":
+                    if current_robot:
+                        robots.append(current_robot)
+                    current_robot = {}
+                elif ":" in line:
+                    key, val = line.split(":", 1)
+                    key = key.strip()
+                    val = val.strip()
+                    # Value parsing
+                    if val.startswith("[") and val.endswith("]"):
+                        # List of floats
+                        try:
+                           val = [float(x) for x in val[1:-1].split(",")]
+                        except ValueError:
+                           pass
+                    elif val.lower() == "true":
+                        val = True
+                    elif val.lower() == "false":
+                        val = False
+                    elif val.lower() == "null":
+                        val = None
+                    elif val.startswith('"') and val.endswith('"'):
+                        val = val[1:-1]
+                    else:
+                        try:
+                            val = float(val)
+                        except ValueError:
+                            pass # Keep as string
+                    
+                    if current_robot is not None:
+                        current_robot[key] = val
+            if current_robot:
+                robots.append(current_robot)
+    except Exception as e:
+        print(f"Error parsing robots.yaml: {e}")
+    return robots
 
 def main():
     """Main function to run multiple robot simulators."""
-
     robots = []
 
-    robot_configurations = [
-        # big map
-        # 1 - 4
-        # c27
-        {"fleetname": "kullar", "robot_serial_number": "R01", "versions": "v2", "version": "2.0.0", "manufacturer": "birfen",
-         "connection_state": "ONLINE", "initial_position": [-3.0, 6.0, 0.9], "bat_charge":85.0, "lin_velocity":0.65, "ang_velocity":0.15},
-        # c26
-        {"fleetname": "kullar", "robot_serial_number": "R02", "versions": "v2", "version": "2.0.0", "manufacturer": "birfen",
-         "connection_state": "ONLINE", "initial_position": [-3.0, 3.0, 0.9], "bat_charge":75.0, "lin_velocity":0.65, "ang_velocity":0.15},
-        # c25
-        {"fleetname": "kullar", "robot_serial_number": "R03", "versions": "v2", "version": "2.0.0", "manufacturer": "birfen",
-         "connection_state": "ONLINE", "initial_position": [-3.0, 0.0, 0.9], "bat_charge":95.0, "lin_velocity":0.65, "ang_velocity":0.15},
-        # # c28
-        # {"fleetname": "kullar", "robot_serial_number": "R04", "versions": "v2", "version": "2.0.0", "manufacturer": "birfen",
-        #   "connection_state": "ONLINE", "initial_position": [-3.0, 9.0, 0.9], "bat_charge":90.0, "lin_velocity":0.65, "ang_velocity":0.15},
-        # # 5 - 8
-        # # c29
-        # {"fleetname": "kullar", "robot_serial_number": "R05", "versions": "v2", "version": "2.0.0", "manufacturer": "birfen",
-        #  "connection_state": "ONLINE", "initial_position": [15.0, 3.0, 0.0], "bat_charge":75.0, "lin_velocity":0.65, "ang_velocity":0.15},
-        # # c30
-        # {"fleetname": "kullar", "robot_serial_number": "R06", "versions": "v2", "version": "2.0.0", "manufacturer": "birfen",
-        #  "connection_state": "ONLINE", "initial_position": [15.0, 6.0, 0.0], "bat_charge":85.0, "lin_velocity":0.65, "ang_velocity":0.15},
-        # # c31
-        # {"fleetname": "kullar", "robot_serial_number": "R07", "versions": "v2", "version": "2.0.0", "manufacturer": "birfen",
-        #  "connection_state": "ONLINE", "initial_position": [15.0, 0.0, 0.0], "bat_charge":95.0, "lin_velocity":0.65, "ang_velocity":0.15},
-        # # c32
-        # {"fleetname": "kullar", "robot_serial_number": "R08", "versions": "v2", "version": "2.0.0", "manufacturer": "birfen",
-        #   "connection_state": "ONLINE", "initial_position": [15.0, 9.0, 0.0], "bat_charge":90.0, "lin_velocity":0.65, "ang_velocity":0.15},
+    # 1. Setup the path to ../config/robots.yaml
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    robots_yaml_path = os.path.join(base_dir, "..", "config", "robots.yaml")
 
-        # turtle world
-        # {"fleetname": "kullar", "robot_serial_number": "R02", "versions": "v2", "version": "2.0.0", "manufacturer": "birfen",
-        # "connection_state": "ONLINE", "initial_position": [-1.45, -1.1, 1.57], "bat_charge":75.0, "lin_velocity":0.25, "ang_velocity":0.15},
-        # {"fleetname": "kullar", "robot_serial_number": "R01", "versions": "v2", "version": "2.0.0", "manufacturer": "birfen",
-        # "connection_state": "ONLINE", "initial_position": [-1.7, 0.63, 1.57], "bat_charge":85.0, "lin_velocity":0.25, "ang_velocity":0.15},
+    # 2. Load the configurations
+    if os.path.exists(robots_yaml_path):
+        print(f"Loading robot configurations from {robots_yaml_path}")
+        try:
+            with open(robots_yaml_path, 'r') as f:
+                robot_configurations = yaml.safe_load(f)
+        except Exception as e:
+            print(f"Error reading YAML file: {e}")
+            return # Exit if the file is corrupted
+    else:
+        # Fallback if the file is missing
+        print(f"Warning: {robots_yaml_path} not found. Loading default configurations.")
+        robot_configurations = [
+            # big map
+            # 1 - 3
+            # c27
+            {"fleetname": "kullar", "robot_serial_number": "R01", "versions": "v2", "version": "2.0.0", "manufacturer": "birfen",
+             "connection_state": "ONLINE", "initial_position": [-3.0, 6.0, 0.9], "bat_charge":85.0, "lin_velocity":0.65, "ang_velocity":0.15},
+            # c26
+            {"fleetname": "kullar", "robot_serial_number": "R02", "versions": "v2", "version": "2.0.0", "manufacturer": "birfen",
+             "connection_state": "ONLINE", "initial_position": [-3.0, 3.0, 0.9], "bat_charge":75.0, "lin_velocity":0.65, "ang_velocity":0.15},
+            # c25
+            {"fleetname": "kullar", "robot_serial_number": "R03", "versions": "v2", "version": "2.0.0", "manufacturer": "birfen",
+             "connection_state": "ONLINE", "initial_position": [-3.0, 0.0, 0.9], "bat_charge":95.0, "lin_velocity":0.65, "ang_velocity":0.15},
+            # Add more robot configurations here if needed. #--->  "diffamr2" | "robovak"
+        ] # Typical Range: 0.5 m/s to 2.0 m/s - linear. | Typical Range: 0.2 rad/s to 1.0 rad/s - angular
 
-        # Add more robot configurations here if needed. #--->  "diffamr2" | "robovak"
-    ]
+    # 3. Initialize and start robots
+    if robot_configurations:
+        for config in robot_configurations:
+            robot = Robot(**config)
+            robots.append(robot)
+    else:
+        print("No robot configurations found. Exiting.")
+        return
 
-    # Typical Range: 0.5 m/s to 2.0 m/s - linear. | Typical Range: 0.2 rad/s to 1.0 rad/s - angular
-    # Initialize and start robots
-    for config in robot_configurations:
-        robot = Robot(**config)
-        robots.append(robot)
-
-    # Let robots run concurrently
+    # 4. Let robots run concurrently
     try:
         while True:
-            print(" - ")
-            time.sleep(1)  # Keep the main thread alive.
+            # You might want to print something more descriptive than " - " 
+            # like the count of active robots
+            print(f"Simulating {len(robots)} robots...")
+            time.sleep(5)  # Increased sleep to reduce console spam
     except KeyboardInterrupt:
-        print("Program interrupted. Exiting...")
+        print("\nProgram interrupted. Exiting...")
         for robot in robots:
             # Clean up MQTT connections when exiting
-            robot.mqtt_client.disconnect()
+            if hasattr(robot, 'mqtt_client'):
+                robot.mqtt_client.disconnect()
 
 if __name__ == "__main__":
     main()
-
-
 
 
 

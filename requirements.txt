@@ -9,3 +9,4 @@ psutil>=5.8.0
 scipy>=1.7.0
 packaging
 networkx
+matplotlib>=3.5.0

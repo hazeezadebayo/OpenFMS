@@ -93,23 +93,18 @@ class FuzzyTaskDispatcher:
                       self.fitness['poor']),
         ]
 
-    def manhattan_distance(self, pos1, pos2):
-        return abs(pos2['x'] - pos1['x']) + abs(pos2['y'] - pos1['y']) + abs(pos2['z'] - pos1['z'])
-
-    def compute_completion_time(self, task_type, rbt_curr_pos, pickup_pos, dropoff_pos=None,
+    def compute_completion_time(self, task_type, dist_to_pickup, dist_to_dropoff=0.0,
                                velocity=1.0, current_battery=50.0, payload=0.0, max_payload=100.0,
                                drain_rate=0.1, min_battery=10.0, task_energy_cost=2.0):
         payload_factor = min(payload / max_payload, 1.0) if max_payload > 0 else 0
         adjusted_velocity = velocity * (1.0 - 0.2 * payload_factor)
 
-        dist_to_pickup = self.manhattan_distance(rbt_curr_pos, pickup_pos)
         time_to_pickup = dist_to_pickup / adjusted_velocity
         battery_depletion = drain_rate * time_to_pickup
         remaining_battery = current_battery - battery_depletion
         total_time = time_to_pickup
 
-        if task_type == 0 and dropoff_pos:
-            dist_to_dropoff = self.manhattan_distance(pickup_pos, dropoff_pos)
+        if task_type == 0 and dist_to_dropoff > 0:
             time_to_dropoff = dist_to_dropoff / adjusted_velocity
             battery_depletion += drain_rate * time_to_dropoff
             total_time += time_to_dropoff
@@ -122,26 +117,25 @@ class FuzzyTaskDispatcher:
 
     def evaluate_robot_for_task(self, task, robot_state):
         task_type = task['type']
-        pickup_pos = task.get('pickup_pos')
-        dropoff_pos = task.get('dropoff_pos')
         payload = task.get('payload', 0.0)
 
-        curr_pos = robot_state['current_pos']
         battery = robot_state['current_battery']
         idle = robot_state['idle_time']
         max_payload = robot_state['max_payload']
         velocity = robot_state['velocity']
         drain_rate = robot_state.get('drain_rate', 0.1)
+        
+        dist_to_pickup = robot_state.get('dist_to_pickup', 0.0)
+        dist_to_dropoff = robot_state.get('dist_to_dropoff', 0.0)
 
         travel_time = 0.0
         effective_battery = battery
 
-        if task_type in [0, 2] and pickup_pos:
+        if task_type in [0, 2] and dist_to_pickup > 0.0:
             travel_time, remaining = self.compute_completion_time(
                 task_type=task_type,
-                rbt_curr_pos=curr_pos,
-                pickup_pos=pickup_pos,
-                dropoff_pos=dropoff_pos,
+                dist_to_pickup=dist_to_pickup,
+                dist_to_dropoff=dist_to_dropoff,
                 velocity=velocity,
                 current_battery=battery,
                 payload=payload,
@@ -343,6 +337,14 @@ class FmTaskHandler:
         """Return list of candidate robots with full state & fitness score."""
         candidates = []
         r_ids = self.factsheet_handler.fetch_serial_numbers(f_id)
+        
+        from_loc_id = task.get('from_loc_id')
+        to_loc_id = task.get('to_loc_id')
+        graph = self.task_dictionary.get('graph', {})
+
+        dist_to_dropoff = 0.0
+        if task['type'] == 0 and from_loc_id and to_loc_id:
+            dist_to_dropoff = self.fm_get_path_distance(from_loc_id, to_loc_id, graph)
 
         for r_id in r_ids:
             if r_id in self.ignore_list or r_id in self.cp_ignore_list:
@@ -360,6 +362,13 @@ class FmTaskHandler:
             if task['type'] == 0 and payload_kg > max_payload:
                 print("6. ")
                 continue
+                
+            dist_to_pickup = 0.0
+            if last_node and from_loc_id:
+                dist_to_pickup = self.fm_get_path_distance(last_node, from_loc_id, graph)
+                # Ensure no unreachable robots are selected if no valid path length can be made
+                if dist_to_pickup == float('inf'):
+                    continue
 
             r_state = {
                 'current_pos': {'x': pos[0], 'y': pos[1], 'z': pos[2]},
@@ -367,7 +376,9 @@ class FmTaskHandler:
                 'idle_time': idle_time,
                 'max_payload': max_payload,
                 'velocity': 1.0,
-                'drain_rate': 0.1
+                'drain_rate': 0.1,
+                'dist_to_pickup': dist_to_pickup,
+                'dist_to_dropoff': dist_to_dropoff
             }
 
             result = self.fuzzy_dispatcher.evaluate_robot_for_task(task, r_state)
@@ -454,6 +465,8 @@ class FmTaskHandler:
 
         return {
             'type': task_type,
+            'from_loc_id': from_loc_id,
+            'to_loc_id': to_loc_id,
             'pickup_pos': pickup,
             'dropoff_pos': dropoff,
             'payload': float(payload_kg),
@@ -931,6 +944,30 @@ class FmTaskHandler:
         return list(waitpoints)
 
     # ----------------------------------------------------------------------------------------------------
+
+    def fm_get_path_distance(self, start, goal, graph):
+        """Find the shortest distance between two nodes using Dijkstra's algorithm."""
+        if start == goal: return 0.0
+        
+        heap = [(0, [start])]
+        visited = set()
+        
+        while heap:
+            dist, path = heapq.heappop(heap)
+            node = path[-1]
+            
+            if node == goal:
+                return dist
+            
+            if node in visited:
+                continue
+            visited.add(node)
+            
+            for neigh, w in graph.get(node, []):
+                if neigh not in visited:
+                    heapq.heappush(heap, (dist + w, path + [neigh]))
+                    
+        return float('inf') # Unreachable
 
     def fm_shortest_paths(self, start, goal, graph, max_alternatives=2):
         """ Find the shortest path and additional alternatives using Dijkstra's algorithm. """

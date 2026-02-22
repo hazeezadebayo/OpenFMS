@@ -1,0 +1,133 @@
+number of total completed Orders: 3.
+number of total cancelled Orders: 0.
+number of charge Orders fullfilled: 0.
+number of currently active Orders: 0.
+number of currently unassigned Orders: 0.
+detected target collisions: 0.
+number of robots: 3: cummulative delays: 0.0.
+Robot ID: R02, Average Execution Duration: 16.37 seconds
+Robot ID: R03, Average Execution Duration: 16.32 seconds
+Robot ID: R01, Average Execution Duration: 16.27 seconds
+timestamp [min]: 1, Throughput: 0.00.
+timestamp [min]: 2, Throughput: 0.00.
+timestamp [min]: 3, Throughput: 0.00.
+timestamp [min]: 4, Throughput: 0.00.
+timestamp [min]: 5, Throughput: 0.00.
+timestamp [min]: 6, Throughput: 0.00.
+timestamp [min]: 7, Throughput: 0.00.
+timestamp [min]: 8, Throughput: 0.00.
+timestamp [min]: 9, Throughput: 0.00.
+timestamp [min]: 10, Throughput: 0.00.
+timestamp [min]: 11, Throughput: 0.00.
+timestamp [min]: 12, Throughput: 0.00.
+timestamp [min]: 13, Throughput: 0.00.
+timestamp [min]: 14, Throughput: 0.00.
+timestamp [min]: 15, Throughput: 0.00.
+timestamp [min]: 16, Throughput: 0.00.
+timestamp [min]: 17, Throughput: 0.00.
+timestamp [min]: 18, Throughput: 0.00.
+timestamp [min]: 19, Throughput: 0.00.
+timestamp [min]: 20, Throughput: 0.00.
+timestamp [min]: 21, Throughput: 0.00.
+timestamp [min]: 22, Throughput: 0.00.
+timestamp [min]: 23, Throughput: 0.00.
+timestamp [min]: 24, Throughput: 0.00.
+timestamp [min]: 25, Throughput: 0.00.
+timestamp [min]: 26, Throughput: 0.00.
+timestamp [min]: 27, Throughput: 0.00.
+timestamp [min]: 28, Throughput: 0.00.
+timestamp [min]: 29, Throughput: 0.00.
+timestamp [min]: 30, Throughput: 0.00.
+timestamp [min]: 31, Throughput: 0.00.
+timestamp [min]: 32, Throughput: 0.00.
+timestamp [min]: 33, Throughput: 0.00.
+timestamp [min]: 34, Throughput: 0.00.
+timestamp [min]: 35, Throughput: 0.00.
+timestamp [min]: 36, Throughput: 0.00.
+timestamp [min]: 37, Throughput: 0.00.
+timestamp [min]: 38, Throughput: 0.00.
+timestamp [min]: 39, Throughput: 0.00.
+timestamp [min]: 40, Throughput: 0.00.
+timestamp [min]: 41, Throughput: 0.00.
+timestamp [min]: 42, Throughput: 0.00.
+timestamp [min]: 43, Throughput: 0.00.
+timestamp [min]: 44, Throughput: 0.00.
+timestamp [min]: 45, Throughput: 0.00.
+timestamp [min]: 46, Throughput: 0.00.
+timestamp [min]: 47, Throughput: 0.00.
+timestamp [min]: 48, Throughput: 0.00.
+timestamp [min]: 49, Throughput: 0.00.
+timestamp [min]: 50, Throughput: 0.00.
+timestamp [min]: 51, Throughput: 0.00.
+timestamp [min]: 52, Throughput: 0.00.
+timestamp [min]: 53, Throughput: 0.00.
+timestamp [min]: 54, Throughput: 0.00.
+timestamp [min]: 55, Throughput: 0.00.
+timestamp [min]: 56, Throughput: 0.00.
+timestamp [min]: 57, Throughput: 0.00.
+timestamp [min]: 58, Throughput: 0.00.
+timestamp [min]: 59, Throughput: 0.00.
+timestamp [min]: 60, Throughput: 0.00.
+timestamp [min]: 61, Throughput: 0.00.
+timestamp [min]: 62, Throughput: 0.00.
+timestamp [min]: 63, Throughput: 0.00.
+timestamp [min]: 64, Throughput: 0.00.
+timestamp [min]: 65, Throughput: 0.00.
+timestamp [min]: 66, Throughput: 0.00.
+timestamp [min]: 67, Throughput: 0.00.
+timestamp [min]: 68, Throughput: 0.00.
+timestamp [min]: 69, Throughput: 0.00.
+timestamp [min]: 70, Throughput: 0.00.
+timestamp [min]: 71, Throughput: 0.00.
+timestamp [min]: 72, Throughput: 0.00.
+timestamp [min]: 73, Throughput: 0.00.
+timestamp [min]: 74, Throughput: 0.00.
+timestamp [min]: 75, Throughput: 0.00.
+timestamp [min]: 76, Throughput: 0.00.
+timestamp [min]: 77, Throughput: 0.00.
+timestamp [min]: 78, Throughput: 0.00.
+timestamp [min]: 79, Throughput: 0.00.
+timestamp [min]: 80, Throughput: 0.00.
+timestamp [min]: 81, Throughput: 0.00.
+timestamp [min]: 82, Throughput: 0.00.
+timestamp [min]: 83, Throughput: 0.00.
+timestamp [min]: 84, Throughput: 0.00.
+timestamp [min]: 85, Throughput: 0.00.
+timestamp [min]: 86, Throughput: 0.00.
+timestamp [min]: 87, Throughput: 0.00.
+timestamp [min]: 88, Throughput: 0.00.
+timestamp [min]: 89, Throughput: 0.00.
+timestamp [min]: 90, Throughput: 0.00.
+timestamp [min]: 91, Throughput: 0.00.
+timestamp [min]: 92, Throughput: 0.00.
+timestamp [min]: 93, Throughput: 0.00.
+timestamp [min]: 94, Throughput: 0.00.
+timestamp [min]: 95, Throughput: 0.00.
+timestamp [min]: 96, Throughput: 0.00.
+timestamp [min]: 97, Throughput: 0.00.
+timestamp [min]: 98, Throughput: 0.00.
+timestamp [min]: 99, Throughput: 0.00.
+timestamp [min]: 100, Throughput: 0.00.
+timestamp [min]: 101, Throughput: 0.00.
+timestamp [min]: 102, Throughput: 0.00.
+timestamp [min]: 103, Throughput: 0.00.
+timestamp [min]: 104, Throughput: 0.00.
+timestamp [min]: 105, Throughput: 0.00.
+timestamp [min]: 106, Throughput: 0.00.
+timestamp [min]: 107, Throughput: 0.00.
+timestamp [min]: 108, Throughput: 0.00.
+timestamp [min]: 109, Throughput: 0.00.
+timestamp [min]: 110, Throughput: 0.00.
+timestamp [min]: 111, Throughput: 0.00.
+timestamp [min]: 112, Throughput: 0.00.
+timestamp [min]: 113, Throughput: 0.00.
+timestamp [min]: 114, Throughput: 0.00.
+timestamp [min]: 115, Throughput: 0.00.
+timestamp [min]: 116, Throughput: 0.00.
+timestamp [min]: 117, Throughput: 3.00.
+timestamp [min]: 118, Throughput: 0.00.
+timestamp [min]: 119, Throughput: 0.00.
+timestamp [min]: 120, Throughput: 0.00.
+avg per robot latency [sec]: {'R01': 0.049757522296130174, 'R02': 0.08917211694836122, 'R03': 0.08516528980791076}.
+num robots: 3, overall avg [sec]: 0.07.
+avg per robot Idle Time [sec]: {'R02': 187.01286840438843, 'R03': 193.31856298446655, 'R01': 236.33198523521423}.

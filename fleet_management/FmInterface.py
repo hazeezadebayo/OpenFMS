@@ -3,6 +3,7 @@
 import sys
 import os
 import time
+import random
 
 # Get the current directory
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -11,10 +12,12 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 's
 
 # Now you can import the module
 from FmMain import FmMain
+from FmSimGenerator import GridFleetGraph
 
-# ---------------------------------------------- #
-#      MAIN                                      #
-# ---------------------------------------------- #
+
+# ────────────────────────────────────────────────
+# M A I N   E X E C U T I O N
+# ────────────────────────────────────────────────
 
 if __name__ == "__main__":
 
@@ -27,25 +30,55 @@ if __name__ == "__main__":
 
     # 2. Set the start time reference
     start_time = time.time()
-    task_trigger_time = 150 #  150 # [seconds]
-    analytics_interval = 50 # [snapshot every 60s → 1 minute.]
+    task_trigger_time = 160 # [seconds]
+    analytics_interval = 120 # [snapshot every 60s → 1 minute.]
     last_analytics_time = 0   # means "no snapshot yet"
 
     print("--- Simulation Loop Started ---")
 
     fm.fm_dispatch_task(fleet_id="kullar")
 
-    # Define all tasks in one place
-    tasks = [
-        {"delay": 0, "robot_id": "R01", "from": "C11", "to": "C12", "priority": "high",   "payload": 10},
-        {"delay": 7, "robot_id": "R02", "from": "C12", "to": "C11", "priority": "medium", "payload": 2},
-        {"delay": 14,"robot_id": "R03", "from": "C9",  "to": "C10", "priority": "low",    "payload": 2},
-        # {"delay": 21,"robot_id": "R04", "from": "C10", "to": "C9",  "priority": "high",   "payload": 10},
-        # {"delay": 28,"robot_id": "R05", "from": "C21", "to": "C22", "priority": "medium", "payload": 10},
-        # {"delay": 35,"robot_id": "R06", "from": "C23", "to": "C21", "priority": "low",    "payload": 0},
-        # {"delay": 42,"robot_id": "R07", "from": "C22", "to": "C23", "priority": "medium", "payload": 10},
-        # {"delay": 49,"robot_id": "R08", "from": "C23", "to": "C22", "priority": "low",    "payload": 0},
-    ]
+    # The GridFleetGraph might occasionally generate an invalid grid layout
+    # due to random checkpoint pruning. Auto-retry until it passes.
+    g = None
+    attempt = 1
+    while g is None:
+        try:
+            g = GridFleetGraph(
+                num_robots=3,
+                num_station_docks=6,
+                num_charge_docks=2,
+                num_waitpoints=4,
+                density_factor=1.3
+            )
+        except RuntimeError as e:
+            print(f"[Attempt {attempt}] Grid generation failed ({e}). Retrying...")
+            attempt += 1
+    # The GridFleetGraph automatically writes configuration yaml files.
+    # We just need to extract the station docs to randomize tasks.
+    
+    station_docks = [n.loc_id for n in g.nodes.values() if n.description == "station_dock"]
+    if len(station_docks) < 2:
+        print("Warning: Not enough station docks generated to create tasks!")
+        station_docks = ["C11", "C12"] # Absolute fallback
+
+    # Dynamically generate tasks picking random station_docks for start and end
+    tasks = []
+    robots_to_assign = ["R01", "R02", "R03"]
+    priorities = ["low", "medium", "high"]
+    
+    for i, robot in enumerate(robots_to_assign):
+        from_loc = random.choice(station_docks)
+        to_loc = random.choice([d for d in station_docks if d != from_loc])
+        
+        tasks.append({
+            "delay": i * 7,
+            "robot_id": robot,
+            "from": from_loc,
+            "to": to_loc,
+            "priority": priorities[i % len(priorities)],
+            "payload": random.randint(2, 10)
+        })
 
     # Add a flag to each task
     for t in tasks:
@@ -68,7 +101,7 @@ if __name__ == "__main__":
                 )
                 last_analytics_time = elapsed_time
 
-            # loop through tasks
+            # loop through static initial tasks
             for t in tasks:
                 if elapsed_time >= task_trigger_time + t["delay"] and not t["sent"]:
                     print(f"[Time: {int(elapsed_time)}s] Triggering {t['robot_id']}...")
@@ -82,7 +115,7 @@ if __name__ == "__main__":
                         payload=t["payload"]
                     )
                     t["sent"] = True
-
+                
             time.sleep(1)
 
     except KeyboardInterrupt:

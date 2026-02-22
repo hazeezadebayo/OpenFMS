@@ -26,6 +26,7 @@ services:
   #   environment:
   #     MQTT_BROKER: mqtt
   #     MQTT_PORT: 1883
+  #     POSTGRES_HOST: db
   #     PYTHONUNBUFFERED: 1
   #   volumes:
   #     - ./logs:/app/logs
@@ -41,6 +42,7 @@ services:
     environment:
       MQTT_BROKER: mqtt
       MQTT_PORT: 1883
+      POSTGRES_HOST: db
       PYTHONUNBUFFERED: 1
     command: python3 fleet_management/FmRobotSimulator.py
 
@@ -54,6 +56,22 @@ services:
     environment:
       MQTT_BROKER: mqtt
       MQTT_PORT: 1883
+      POSTGRES_HOST: db
       PYTHONUNBUFFERED: 1
+    volumes:
+      - ./logs:/app/logs
     # Wait for manager to be ready (rudimentary sleep in script or here)
     entrypoint: [ "/bin/bash", "-c", "sleep 10 && python3 fleet_management/FmInterface.py" ]
+
+  # Optional: Dashboard viewer
+  dashboard:
+    build: .
+    depends_on:
+      - scenario
+    environment:
+      PYTHONUNBUFFERED: 1
+    volumes:
+      - ./logs:/app/logs
+    tty: true
+    stdin_open: true
+    command: /bin/sh -c "while true; do clear; cat logs/live_dashboard.txt; sleep 0.1; done"

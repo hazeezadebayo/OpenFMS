@@ -201,6 +201,8 @@ graph:
     - 0.1
 
   C17:
+  - - C31
+    - 0.1
   - - C23
     - 0.1
   - - C13
@@ -235,6 +237,8 @@ graph:
     - 0.1
 
   C20:
+  - - C32
+    - 0.1
   - - C24
     - 0.1
   - - C16
@@ -256,6 +260,14 @@ graph:
 
   C30:
   - - C19
+    - 0.1
+
+  C31:
+  - - C17
+    - 0.1
+
+  C32:
+  - - C20
     - 0.1
 
 # LINE 6
@@ -573,7 +585,7 @@ itinerary:
   - 12.0
   - -0.097
   - 0.995
-  description: station_dock
+  description: charge_dock
   fleet_id: kullar
   map_id: bina_1_floor_0
   loc_id: C24
@@ -585,7 +597,7 @@ itinerary:
   - 3.0
   - -0.097
   - 0.995
-  description: charge_dock
+  description: station_dock # home_dock
   fleet_id: kullar
   map_id: bina_1_floor_0
   loc_id: C29
@@ -595,10 +607,30 @@ itinerary:
   - 6.0
   - -0.097
   - 0.995
-  description: charge_dock
+  description: station_dock # home_dock
   fleet_id: kullar
   map_id: bina_1_floor_0
   loc_id: C30
+
+- coordinate:
+  - 15.0
+  - 0.0
+  - -0.097
+  - 0.995
+  description: station_dock # home_dock
+  fleet_id: kullar
+  map_id: bina_1_floor_0
+  loc_id: C31
+
+- coordinate:
+  - 15.0
+  - 9.0
+  - -0.097
+  - 0.995
+  description: station_dock # home_dock
+  fleet_id: kullar
+  map_id: bina_1_floor_0
+  loc_id: C32
 
 
 # LINE 0 CHECKPOINT PROPERTIES
@@ -642,6 +674,11 @@ itinerary:
   fleet_id: kullar
   map_id: bina_1_floor_0
   loc_id: C28
+
+
+
+
+
 
 ### WAITPOINTS
 

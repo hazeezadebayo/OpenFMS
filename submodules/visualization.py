@@ -1,8 +1,13 @@
-import json, os, logging, datetime, random, yaml, math, re, sys
+import json, os, logging, datetime, random, math, re, sys
+import yaml
 from jsonschema import validate, ValidationError
 from psycopg2 import sql
 import psycopg2, psycopg2.extras
 from pathlib import Path
+
+import matplotlib.pyplot as plt
+import matplotlib.patches as patches
+import shutil
 
 class VisualizationSubscriber:
     """ Visualization handler """
@@ -31,54 +36,63 @@ class VisualizationSubscriber:
         self.output_to_file = output_log
 
         # logger; here we use a simple print-based one for clarity.
-        self.logger = self._get_logger("VisualizationSubscriber", output_log)
+        self.logger_name = "VisualizationSubscriber"
+        self.logger = self._get_logger(self.logger_name, output_log)
 
-        self.create_database(dbname)
+        if self.db_conn:
+            self.create_database(dbname)
 
 
     # --------------------------------------------------------------------------------------------
 
-    def _get_logger(self, logger_name, output_log):
-
+    def _get_logger(self, logger_name, output_log=True):
         logger = logging.getLogger(logger_name)
         logger.setLevel(logging.INFO)
 
-        # Ensure handlers are not duplicated
-        if not logger.hasHandlers() and output_log:
-            # This:
-            # Get the directory of the current script
-            script_dir = os.path.dirname(os.path.abspath(__file__))
-            # Go one folder backwards
-            parent_dir = os.path.dirname(script_dir)
-            # Create "logs" folder there
-            logs_dir = os.path.join(parent_dir, "logs")
-            os.makedirs(logs_dir, exist_ok=True)
-            # Build log file path inside "logs" folder
-            log_file_path = os.path.join(logs_dir, "FmLogHandler.log")
-            # Or that:
-            # Set up logging to log file
-            # log_file_path = os.path.abspath("FmLogHandler.log")
+        # Avoid duplicate handlers
+        if logger.hasHandlers():
+            logger.handlers.clear()           # ← safest in dynamic/repeated init scenarios
 
-            # Append if file exists, otherwise create new
-            file_mode = 'a' if os.path.exists(log_file_path) else 'w'
+        if not output_log:
+            return logger
 
-            # File handler
-            file_handler = logging.FileHandler(log_file_path, mode=file_mode)
-            file_handler.setFormatter(
-                logging.Formatter("[%(levelname)s] [%(asctime)s] %(name)s: %(message)s")
+        # ─── Directory setup ────────────────────────────────────────
+        # logs_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "logs")
+        logs_dir = os.path.join(os.getcwd(), "logs")
+        os.makedirs(logs_dir, exist_ok=True)
+        log_file_path = os.path.join(logs_dir, "FmLogHandler.log")
+
+        file_mode = 'a' if os.path.exists(log_file_path) else 'w'
+
+        # ─── File handler ───────────────────────────────────────────
+        file_handler = logging.FileHandler(log_file_path, mode=file_mode)
+        file_handler.setLevel(logging.INFO)
+        file_handler.setFormatter(
+            logging.Formatter(
+                "[%(levelname)s] [%(asctime)s] %(name)s: %(message)s",
+                datefmt="%Y-%m-%d %H:%M:%S"
             )
-            logger.addHandler(file_handler)
+        )
+        logger.addHandler(file_handler)
 
-            # Optional terminal output
-            if self.output_to_screen:
-                stream_handler = logging.StreamHandler(sys.stdout)
-                stream_handler.setFormatter(
-                    logging.Formatter("[%(levelname)s] [%(asctime)s] %(name)s: %(message)s")
-                )
-                logger.addHandler(stream_handler)
+        # ─── Console handler with beautiful custom format ──────────
+        if self.output_to_screen:
+            console_handler = logging.StreamHandler(sys.stdout)
+            console_handler.setLevel(logging.INFO)
 
-            # Show log file path (optional)
-            # logger.info(f"Logs are written to: {log_file_path}")
+            # Custom formatter – no level & timestamp here (we'll add them manually when needed)
+            class CustomConsoleFormatter(logging.Formatter):
+                def format(self, record):
+                    # We ignore record.asctime and record.levelname
+                    # → they will be added only when you use the colored wrapper
+                    return record.msg   # just pass the message through
+
+            console_handler.setFormatter(CustomConsoleFormatter())
+
+            logger.addHandler(console_handler)
+
+        # Optional: log where files go (only once, or under debug)
+        # logger.debug(f"Logs written to: {log_file_path}")
 
         return logger
 
@@ -299,7 +313,7 @@ class VisualizationSubscriber:
 
             self.logger.info("Successfully updated 'graph' and 'itinerary' in %s", config_file_path)
         except FileNotFoundError:
-            self.logger.error("File %s not found.", config_file_path)
+            self.logger.error("Configuration file not found: %s", config_file_path)
         except yaml.YAMLError as e:
             self.logger.error("Error processing YAML file: %s", e)
 
@@ -486,179 +500,423 @@ class VisualizationSubscriber:
         self.robot_positions[serial_number] = {'x': agv_position.get('x'), 'y': agv_position.get('y')}
 
     # --------------------------------------------------------------------------------------------
-
+    
     def terminal_log_visualization(self, message, class_name, function_name, log_type="debug"):
         """
-        Custom logging function with ANSI escape codes for color formatting.
-        Args:
-            message (str): The message to log.
-            class_name (str): The name of the class where the log originates.
-            function_name (str): The name of the function where the log originates.
-            log_type (str): The type of log (debug, warn, error, info). Determines color.
+        Print nice colored logs to terminal only.
+        File logging still uses standard format.
         """
-        # ANSI color codes
+        if not self.output_to_screen:
+            return
+
+        # ANSI color codes for log levels
         log_colors = {
-            "debug": "\033[34m",  # Blue
-            "warn": "\033[33m",   # Yellow
-            "error": "\033[31m",  # Red
-            "info": "\033[32m",   # Green
-            "critical": "\033[35m",  # Orange (ANSI escape code for orange)
-            "notice": "\033[38;5;208m"   # Purple
+            "debug":    "\033[36m",      # Cyan
+            "info":     "\033[32m",      # Green
+            "notice":   "\033[38;5;208m",# Orange
+            "warn":     "\033[33m",      # Yellow
+            "error":    "\033[31m",      # Red
+            "critical": "\033[35m",      # Magenta
         }
 
-        # Fallback color if type is unknown
-        color = log_colors.get(log_type.lower(), "\033[37m")  # Default to white
-
-        # Reset code
+        color = log_colors.get(log_type.lower(), "\033[37m")   # default white
         reset = "\033[0m"
 
-        # Current timestamp
+        # Bright yellow for class name
+        class_color = "\033[93m"   # bright yellow - very readable
+
         timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-        # Format class name in uppercase (no additional color change)
-        # class_name_formatted = class_name.upper()
+        # Level filtering
+        level_map = {
+            "debug": 10,
+            "info": 20,
+            "notice": 25,
+            "warn": 30,
+            "error": 40,
+            "critical": 50,
+        }
+        min_level = level_map.get(self.log_level.lower(), 20)
+        this_level = level_map.get(log_type.lower(), 20)
 
-        # Build and print the log message
-        formatted_message = (
-            f"{color}[{log_type.upper():<5}] {reset}"   # Log type with color
-            f"\033[36m[{timestamp}]\033[0m "           # Timestamp in cyan
-            f"\033[1m{class_name}.{function_name}\033[0m "  # Class and function bold
-            f"- {message}"
-        )
+        if this_level >= min_level:
 
-        if log_type == self.log_level or self.log_level == 'debug':
-            # print(formatted_message)
-            self.logger.info(formatted_message)
+            logger_part = f"{self.logger_name:<20}: " if self.logger_name else ""
 
-        # if log_type == 'error':
-        #    self.logger.error(formatted_message)
+            formatted = (
+                f"{logger_part}"                                   # ← added
+                f"{color}[{log_type.upper():<6}]{reset} "          # colored [INFO] etc.
+                f"\033[36m[{timestamp}]{reset} "                   # cyan timestamp              
+                f"{class_color}{class_name}{reset}"               # yellow class    
+                f".\033[1m{function_name:<20}{reset} "               # bold function name
+                f"- {message}"
+            )
+            print(formatted)
 
     # # --------------------------------------------------------------------------------------------
 
     def terminal_graph_visualization(self, graph=None, itinerary=None, robot_positions=None):
-        """Show motion as ASCII art on terminal with fixed-width grid cells."""
-        # Step 0: Use default values if needed
+        """Show motion as ASCII art on terminal with fixed-width grid cells.
+        Optionally use Matplotlib for real-time updating plot.
+        """
+
+        # Step 0: Defaults
         graph = graph or self.task_dictionary['graph']
         itinerary = itinerary or self.task_dictionary['itinerary']
         robot_positions = robot_positions or self.robot_positions
 
-        # Step 1: Extract node positions (filter by fleet_id)
+        # Step 1: Node positions (fleet filtered)
         node_positions = {
             item['loc_id']: (item['coordinate'][0], item['coordinate'][1])
             for item in itinerary if item['fleet_id'] == self.fleetname
         }
 
-        # Step 2: Normalize coordinates to fit into a 2D ASCII grid
+        # Step 2: Bounds
         all_x = [coord[0] for coord in node_positions.values()]
         all_y = [coord[1] for coord in node_positions.values()]
-        min_x, max_x = min(all_x), max(all_x)
-        min_y, max_y = min(all_y), max(all_y)
+        min_x = min(all_x) if all_x else 0.0
+        max_x = max(all_x) if all_x else 0.0
+        min_y = min(all_y) if all_y else 0.0
+        max_y = max(all_y) if all_y else 0.0
 
-        grid_width = 50
-        grid_height = 20
+        # ────────────────────────────────────────────────
+        # PERSISTENT ROBOT COLORS (both views)
+        # ────────────────────────────────────────────────
+        if not hasattr(self, '_robot_color_map'):
+            self._robot_color_map = {}
+
+        ansi_colors = [
+            '\033[34m', '\033[33m', '\033[31m', '\033[32m',
+            '\033[36m', '\033[35m', '\033[38;5;208m', '\033[95m',
+            '\033[96m', '\033[93m', '\033[91m', '\033[92m'
+        ]
+
+        mpl_colors = [
+            'blue', 'orange', 'green', 'red', 'purple', 'brown',
+            'pink', 'olive', 'cyan', 'magenta', 'yellow',
+            'lime', 'teal', 'indigo', 'maroon', 'navy', 'darkgreen'
+        ]
+
+        # Assign colors only to new robots
+        for robot in robot_positions:
+            if robot not in self._robot_color_map:
+                self._robot_color_map[robot] = {
+                    'ansi': random.choice(ansi_colors),
+                    'mpl': mpl_colors[len(self._robot_color_map) % len(mpl_colors)]
+                }
+
+        # ────────────────────────────────────────────────
+        # ─── Terminal size ───
+        try:
+            term_size = shutil.get_terminal_size(fallback=(100, 30))
+            term_w, term_h = term_size.columns, term_size.lines
+        except:
+            term_w, term_h = 100, 30
+
+        grid_width  = max(20, min(100, term_w // 5))
+        grid_height = max(16, min(40, term_h // 2))
+        cell_width  = 5  # Fixed cell width for more compact visual
+
+        if term_w < 90:
+            cell_width = 4
 
         def normalize(val, min_val, max_val, grid_size):
+            if max_val <= min_val:
+                return grid_size // 2
             return int((val - min_val) / (max_val - min_val) * (grid_size - 1))
 
-        # Use a fixed cell width (e.g., 4 characters per cell)
-        cell_width = 4
-
-        # Initialize grid (each cell is an empty string with cell_width spaces)
         grid = [[' ' * cell_width for _ in range(grid_width)] for _ in range(grid_height)]
+        occupied = set()
 
-        # Step 3: Place nodes on the grid with conflict resolution
+        # ─── Place nodes ───
         node_grid_positions = {}
-        occupied_positions = set()
+        active_horizons = getattr(self, 'active_horizons', {})
 
         for node, (x, y) in node_positions.items():
             gx = normalize(x, min_x, max_x, grid_width)
             gy = normalize(y, min_y, max_y, grid_height)
 
-            # Resolve conflicts by shifting to the nearest free space
-            while (gx, gy) in occupied_positions:
-                gx += 1
-                if gx >= grid_width:
-                    gx = 0
-                    gy += 1
-                if gy >= grid_height:
-                    gy = 0
+            if 0 <= gx < grid_width and 0 <= gy < grid_height:
+                occupied.add((gx, gy))
+                node_grid_positions[node] = (gx, gy)
 
-            occupied_positions.add((gx, gy))
-            node_grid_positions[node] = (gx, gy)
-            # Center the node label within the fixed cell width
-            grid[gy][gx] = node.center(cell_width)
+                # By default nodes are drawn uncolored
+                display_color = ""
+                reset_color = ""
 
-        # Step 4: Draw edges between nodes using Bresenham's algorithm
-        def draw_line(grid, x1, y1, x2, y2):
-            points = list(bresenham(x1, y1, x2, y2))
-            for px, py in points:
-                # Only draw if this cell hasn't been occupied by a node label or robot symbol
-                if grid[py][px].strip() == '':
-                    grid[py][px] = '.' * cell_width
+                # Check if node overlaps with any robot's active path
+                for f_r_id, h_data in active_horizons.items():
+                    horizon = h_data.get('horizon') or []
+                    released = h_data.get('horizon_release') or []
+                    
+                    if node in horizon:
+                        try:
+                            idx = horizon.index(node)
+                            is_released = released[idx] if isinstance(released, list) and idx < len(released) else True
+                        except (ValueError, IndexError):
+                            is_released = True
+                            
+                        if not is_released:
+                            # Use this robot's assigned color to light up the node beacon
+                            if f_r_id in self._robot_color_map:
+                                display_color = self._robot_color_map[f_r_id]['ansi']
+                                reset_color = "\033[0m"
+                                break
+                
+                label = str(node)[:cell_width].center(cell_width)
+                if display_color:
+                    # Place the colored string correctly into the cell list without breaking terminal spacing
+                    grid[gy][gx] = f"{display_color}{label}{reset_color}"
+                else:
+                    grid[gy][gx] = label
 
-        def bresenham(x1, y1, x2, y2):
-            """Bresenham's line algorithm."""
-            dx = abs(x2 - x1)
-            dy = abs(y2 - y1)
-            sx = 1 if x1 < x2 else -1
-            sy = 1 if y1 < y2 else -1
-            err = dx - dy
+        # ─── Line drawing ───
+        def bresenham(x0, y0, x1, y1):
+            points = []
+            dx = abs(x1 - x0)
+            dy = -abs(y1 - y0)
+            sx = 1 if x0 < x1 else -1
+            sy = 1 if y0 < y1 else -1
+            err = dx + dy
             while True:
-                yield x1, y1
-                if x1 == x2 and y1 == y2:
+                points.append((x0, y0))
+                if x0 == x1 and y0 == y1:
                     break
                 e2 = 2 * err
-                if e2 > -dy:
-                    err -= dy
-                    x1 += sx
-                if e2 < dx:
+                if e2 >= dy:
+                    err += dy
+                    x0 += sx
+                if e2 <= dx:
                     err += dx
-                    y1 += sy
+                    y0 += sy
+            return points
+
+        def draw_line(grid, gx1, gy1, gx2, gy2):
+            if (gx1, gy1) == (gx2, gy2):
+                return
+            
+            # Pure vertical line explicit bypass
+            if abs(gx1 - gx2) <= 1:
+                ymin, ymax = min(gy1, gy2), max(gy1, gy2)
+                if ymax - ymin > 1:
+                    for y in range(ymin + 1, ymax):
+                        if 0 <= gx1 < grid_width and 0 <= y < grid_height:
+                            if not grid[y][gx1].strip():
+                                grid[y][gx1] = '│'.center(cell_width)
+                return
+            
+            # Pure horizontal line explicit bypass
+            if abs(gy1 - gy2) <= 1:
+                xmin, xmax = min(gx1, gx2), max(gx1, gx2)
+                if xmax - xmin > 1:
+                    for x in range(xmin + 1, xmax):
+                        if 0 <= x < grid_width and 0 <= gy1 < grid_height:
+                            if not grid[gy1][x].strip():
+                                grid[gy1][x] = '─'.center(cell_width)
+                return
+                
+            pts = bresenham(gx1, gy1, gx2, gy2)
+            if len(pts) < 3:
+                return
+            # Lowering the minimum step to 1 ensures short vertical segments are explicitly drawn 
+            # instead of being skipped by a mandatory stride of 2.
+            step = max(1, len(pts) // 18)
+            for i, (px, py) in enumerate(pts):
+                if i % step != 0:
+                    continue
+                if not (0 <= px < grid_width and 0 <= py < grid_height):
+                    continue
+                if grid[py][px].strip():
+                    continue
+                ch = '·'
+                if 0 < i < len(pts)-1:
+                    px_prev, py_prev = pts[i-1]
+                    px_next, py_next = pts[i+1]
+                    dx = px_next - px_prev
+                    dy = py_next - py_prev
+                    
+                    # Terminal cells are roughly 2x as tall as they are wide.
+                    # Because dx is multiplied by cell_width, we must adjust threshold logic
+                    # so vertical lines don't get misidentified as diagonals.
+                    if abs(dx) > abs(dy) * 3:
+                        ch = '─'
+                    elif abs(dy) * 1.5 >= abs(dx): # Looser vertical check
+                        ch = '│'
+                    elif dx * dy > 0:
+                        ch = '/'
+                    else:
+                        ch = '\\'
+                grid[py][px] = ch.center(cell_width)
 
         for node, edges in graph.items():
-            if node in node_grid_positions:
-                x1, y1 = node_grid_positions[node]
-                for edge in edges:
-                    neighbor = edge[0]
-                    if neighbor in node_grid_positions:
-                        x2, y2 = node_grid_positions[neighbor]
-                        draw_line(grid, x1, y1, x2, y2)
+            if node not in node_grid_positions:
+                continue
+            x1, y1 = node_grid_positions[node]
+            for neigh, _ in edges:
+                if neigh in node_grid_positions:
+                    x2, y2 = node_grid_positions[neigh]
+                    draw_line(grid, x1, y1, x2, y2)
 
-        # Step 5: Assign random colors to robots
-        colors = ['\033[34m', '\033[33m', '\033[31m', '\033[32m', '\033[36m', '\033[35m', '\033[38;5;208m']
-        robot_colors = {robot: random.choice(colors) for robot in robot_positions}
-
-        # Step 6: Place robots on the grid (using their x,y coordinates)
-        for robot, position in robot_positions.items():
-            rx, ry = position['x'], position['y']
+        # ─── Place robots ─── improved visibility
+        for robot, pos in robot_positions.items():
+            rx, ry = pos['x'], pos['y']
             gx = normalize(rx, min_x, max_x, grid_width)
             gy = normalize(ry, min_y, max_y, grid_height)
 
-            # Resolve conflicts with other robots (or nodes already placed)
-            while (gx, gy) in occupied_positions:
-                gx += 1
-                if gx >= grid_width:
-                    gx = 0
-                    gy += 1
-                if gy >= grid_height:
-                    gy = 0
+            dx = dy = 0
+            orig_gx, orig_gy = gx, gy
+            attempts = 0
+            while (gx, gy) in occupied and attempts < 40:
+                attempts += 1
+                if dx == 0 and dy == 0: dx = 1
+                elif dx > 0 and dy == 0: dy, dx = 1, -dx
+                elif dx < 0 and dy == 0: dy, dx = -1, -dx
+                elif dx == 0 and dy > 0: dx, dy = -1, -dy
+                elif dx == 0 and dy < 0: dx, dy = 1, -dy
+                else: dx, dy = -dy, dx
+                gx = orig_gx + dx
+                gy = orig_gy + dy
+                if not (0 <= gx < grid_width and 0 <= gy < grid_height):
+                    gx, gy = orig_gx, orig_gy
+                    break
 
-            occupied_positions.add((gx, gy))
-            # Use robot symbol with color, ensuring it fits the fixed width
-            grid[gy][gx] = f"{robot_colors[robot]}{robot.center(cell_width)}\033[0m"
+            if 0 <= gx < grid_width and 0 <= gy < grid_height and (gx, gy) not in occupied:
+                occupied.add((gx, gy))
+                color = self._robot_color_map[robot]['ansi']
 
-        # Step 7: Render the grid
-        print(" ")
+                robot_str = str(robot).strip()
+
+                if cell_width <= 5:
+                    # Compact + bright: show first 3 chars or less
+                    visible = robot_str[:3] if len(robot_str) >= 3 else robot_str
+                    symbol = visible.center(cell_width)
+                    display = f"{color}{symbol}\033[0m"
+                elif cell_width >= 7 and len(robot_str) + 2 <= cell_width:
+                    # Enough space for nice boxed look
+                    symbol = robot_str.center(cell_width - 2)
+                    display = f"{color}[{symbol}]\033[0m".center(cell_width)
+                else:
+                    # Medium: colored ID without brackets, right-aligned for readability
+                    short_len = cell_width
+                    short = robot_str[:short_len].rjust(short_len)
+                    display = f"{color}{short}\033[0m"
+
+                grid[gy][gx] = display
+
+        # ─── Render to File ───
+        # We collect the string and write it to a dedicated file in the logs/ volume directory.
+        # This completely separates the dashboard from standard logging!
+        dashboard_content = []
+        dashboard_content.append("\033[2J\033[H")  # clear screen for viewers like `cat`
+        dashboard_content.append("═" * term_w)
+        title = f" Fleet {self.fleetname} | Nodes: {len(node_positions)} | Robots: {len(robot_positions)} "
+        dashboard_content.append(title.center(term_w))
+        scale = f"Scale ≈ {grid_width}×{grid_height} | x:[{min_x:.1f}…{max_x:.1f}] y:[{min_y:.1f}…{max_y:.1f}]"
+        dashboard_content.append(scale.center(term_w))
+        dashboard_content.append("═" * term_w)
+
         for row in grid:
-            print(''.join(row))
+            dashboard_content.append(''.join(row).rstrip())
+
+        dashboard_content.append("═" * term_w)
+        # print("\n".join(dashboard_content))
+
+        # Write to the file in logs/ directory (robust, matching _get_logger logic)
+        logs_dir = os.path.join(os.getcwd(), "logs")
+        os.makedirs(logs_dir, exist_ok=True)
+        
+        # --- Append Analytics Summary (if available) ---
+        import glob
+        
+        # Use absolute docker mapping first, fallback to relative logic
+        search_path = "/app/logs/result_snapshot_*.txt"
+        existing_snapshots = glob.glob(search_path)
+        if not existing_snapshots:
+            search_path = os.path.join(logs_dir, "result_snapshot_*.txt")
+            existing_snapshots = glob.glob(search_path)
+        
+        if existing_snapshots:
+            # Get the most recent snapshot file by numeric index
+            def extract_idx(f):
+                base = os.path.splitext(f)[0]
+                parts = base.split("_")
+                if parts[-1].isdigit(): return int(parts[-1])
+                return -1
+            
+            latest_snapshot = max(existing_snapshots, key=extract_idx)
+            
+            # We want to display a compact summary
+            try:
+                with open(latest_snapshot, "r", encoding="utf-8") as rf:
+                    lines = [l.strip() for l in rf.readlines() if l.strip()]
+                
+                # Grouping metrics:
+                sys_metrics = []
+                robot_metrics = []
+                
+                for line in lines:
+                    # strip ansi sequences if they slipped into the log file
+                    clean_line = re.sub(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])', '', line)
+                    
+                    if "number of total completed Orders" in clean_line: sys_metrics.append(clean_line.replace("number of total ", ""))
+                    if "number of currently active Orders" in clean_line: sys_metrics.append(clean_line.replace("number of currently ", ""))
+                    if "number of currently unassigned Orders" in clean_line: sys_metrics.append(clean_line.replace("number of currently ", ""))
+                    if "overall avg [sec]" in clean_line: sys_metrics.append(clean_line.replace("num robots", "Robots"))
+                    if "detected target collisions" in clean_line: sys_metrics.append(clean_line.replace("detected target collisions:", "Conflicts:"))
+                    if "Average Execution Duration" in clean_line: robot_metrics.append(clean_line.replace("Average Execution Duration:", "Avg Exec:"))
+
+                if sys_metrics or robot_metrics:
+                    dashboard_content.append("")
+                    dashboard_content.append("📊 REAL-TIME ANALYTICS".center(term_w))
+                    dashboard_content.append("─" * term_w)
+                    
+                    # Print system metrics side by side
+                    if sys_metrics:
+                        row = " | ".join(sys_metrics[:3])
+                        dashboard_content.append(row.center(term_w))
+                        if len(sys_metrics) > 3:
+                            dashboard_content.append(" | ".join(sys_metrics[3:]).center(term_w))
+                            
+                    if robot_metrics:
+                        dashboard_content.append("")
+                        # Create small columns for robot metrics
+                        chunks = [robot_metrics[i:i+3] for i in range(0, len(robot_metrics), 3)]
+                        for chunk in chunks:
+                            dashboard_content.append("   ".join(chunk).center(term_w))
+                            
+                    dashboard_content.append("═" * term_w)
+
+            except Exception as e:
+                import traceback
+                err = traceback.format_exc()
+                dashboard_content.append(f"Analytics Parsing Error: {e}".center(term_w))
+                for trace_line in err.split("\n"):
+                    dashboard_content.append(trace_line)
+        else:
+                dashboard_content.append(f"No snapshots: searched {search_path}".center(term_w))
+
+        dashboard_content.append("--- END OF DASHBOARD RENDER ---")
+        dashboard_path = os.path.join(logs_dir, "live_dashboard.txt")
+        
+        try:
+            print(f"[DEBUG] Writing dashboard loop trace - found {len(existing_snapshots)} snapshots. Array has {len(dashboard_content)} lines.")
+            with open(dashboard_path, "w", encoding="utf-8") as f:
+                f.write("\n".join(dashboard_content) + "\n")
+                f.flush()
+                os.fsync(f.fileno())
+            with open(os.path.join(logs_dir, "test_dashboard_append.txt"), "w", encoding="utf-8") as tf:
+                tf.write("\n".join(dashboard_content) + "\n")
+                tf.flush()
+        except IOError as e:
+            print(f"[DEBUG] Dashboard writing failed: {e}")
+            pass
 
     # # --------------------------------------------------------------------------------------------
-
 
 # Example usage
 if __name__ == "__main__":
 
-   # establish connection to DB
+    # establish connection to DB
     conn = None
     try: # Sample database connection setup (assuming the database is already created)
         conn = psycopg2.connect(host='localhost', dbname='postgres', user='postgres', password='root', port='5432')

@@ -264,6 +264,8 @@ class FmMain():
             'fm_add_landmark_request',
             'fm_delete_landmark_request',
             'fm_analytics_trigger',
+            'fm_add_mutex_groups',
+            'fm_remove_mutex_group',
             'exit'
             ]
 
@@ -591,7 +593,39 @@ class FmMain():
 
         elif chosen_option == 'fm_analytics_trigger':
             # analytics
-            self.schedule_handler.fm_analytics(f_id_, self.manufacturer, r_id=None, debug_level='info')
+            self.schedule_handler.fm_analytics(f_id_, self.manufacturer, r_id=None, debug_level='info', write_to_file=True)
+
+        elif chosen_option == 'fm_add_mutex_groups':
+            while True:
+                try:
+                    group_input = input("Enter Mutex Group as a list of nodes (e.g., ['C1', 'C2', 'C27']): ")
+                    group_list = ast.literal_eval(group_input)
+                    if isinstance(group_list, list) and all(isinstance(n, str) for n in group_list):
+                        self.schedule_handler.traffic_handler.fm_add_mutex_groups(group_list)
+                        break
+                    else:
+                        raise ValueError
+                except Exception:
+                    self.schedule_handler.traffic_handler.task_handler.visualization_handler.terminal_log_visualization(
+                        "Invalid input. Mutex Group must be a list of strings [node1, node2, ...]. Try again or enter 'exit'.",
+                        "FmMain",
+                        "interactive_robot_fleet_startup",
+                        "critical")
+                    if group_input.lower() == 'exit':
+                        break
+
+        elif chosen_option == 'fm_remove_mutex_group':
+            current_groups = self.schedule_handler.traffic_handler.mutex_groups
+            if not current_groups:
+                 self.schedule_handler.traffic_handler.task_handler.visualization_handler.terminal_log_visualization(
+                        "No mutex groups currently defined.", "FmMain", "interactive_robot_fleet_startup", "info")
+            else:
+                for i, group in enumerate(current_groups, 1):
+                    print(f"{i}. {group}")
+                choice = input("Enter the number of the group to remove: ")
+                if choice.isdigit() and 1 <= int(choice) <= len(current_groups):
+                    removed_group = current_groups[int(choice) - 1]
+                    self.schedule_handler.traffic_handler.fm_remove_mutex_group(removed_group)
 
         elif chosen_option == 'exit':
             r_id_ = 0
@@ -688,8 +722,8 @@ class FmMain():
                 config = yaml.safe_load(file)
 
             # Extract sections and assign to respective variables
-            mqtt_broker_address = str(config['mqtt']['broker_address'])
-            mqtt_broker_port = str(config['mqtt']['broker_port'])
+            mqtt_broker_address = str(os.getenv('MQTT_BROKER', config['mqtt']['broker_address']))
+            mqtt_broker_port = str(os.getenv('MQTT_PORT', config['mqtt']['broker_port']))
             mqtt_keep_alive = str(config['mqtt']['keep_alive'])
 
             fleetname = str(config['fleet_info']['fleetname'])
@@ -697,11 +731,11 @@ class FmMain():
             fleet_versions = str(config['fleet_info']['versions'])
             fleet_manufacturer = str(config['fleet_info']['manufacturer'])
 
-            postgres_host = str(config['postgres']['host'])        #'localhost'
-            postgres_port = str(config['postgres']['port'])         #5432
-            postgres_database = str(config['postgres']['database'])  #'postgres'
-            postgres_user = str(config['postgres']['user'])          #'postgres'
-            postgres_password = str(config['postgres']['password'])  #'root'
+            postgres_host = str(os.getenv('POSTGRES_HOST', config['postgres']['host']))
+            postgres_port = str(os.getenv('POSTGRES_PORT', config['postgres']['port']))
+            postgres_database = str(os.getenv('POSTGRES_DB', config['postgres']['database']))
+            postgres_user = str(os.getenv('POSTGRES_USER', config['postgres']['user']))
+            postgres_password = str(os.getenv('POSTGRES_PASSWORD', config['postgres']['password']))
 
             task_dict = {"itinerary": config["itinerary"],
                                "graph": config["graph"]}
@@ -731,7 +765,7 @@ class FmMain():
         - f_id (str): The fleet ID to associate with the maps.
         """
         if f_id in self.maps:
-            for map_info in self.maps[f_id][0]:
+            for map_info in self.maps[f_id]:
                 # get pgm and yaml file path
                 pgm_file_path = map_info['map_pgm_path']
                 yaml_file_path = map_info['map_yaml_path']
