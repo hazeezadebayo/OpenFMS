@@ -6,9 +6,9 @@
   connection_state: ONLINE
   initial_position:
   - 6.0
-  - -6.0
+  - 6.0
   - 0.0
-  bat_charge: 66.4
+  bat_charge: 93.4
   lin_velocity: 0.65
   ang_velocity: 0.15
 - fleetname: kullar
@@ -21,6 +21,6 @@
   - 0.0
   - 0.0
   - 0.0
-  bat_charge: 85.5
+  bat_charge: 69.8
   lin_velocity: 0.65
   ang_velocity: 0.15

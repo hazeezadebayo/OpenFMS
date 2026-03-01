@@ -1,17 +1,61 @@
 #!/usr/bin/env python3
 
-import psycopg2, psycopg2.extras
+import psycopg2, psycopg2.extras, psycopg2.pool
 import time, yaml, re, json, os, time, threading, ast
 from pathlib import Path
 from FmScheduleHandler import FmScheduleHandler
 from paho.mqtt import client as mqtt_client
 from paho.mqtt.client import error_string
 from jsonschema import validate, ValidationError
-
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
 
 ########################################################################
+# Thread-safe connection pool proxy
+#
+# Wraps a ThreadedConnectionPool and routes every .cursor(), .commit()
+# and .rollback() call to a per-thread connection. This lets every
+# submodule use self.db_conn.cursor() / self.db_conn.commit() with no
+# code changes while being fully safe under a ThreadPoolExecutor.
+########################################################################
+class ThreadSafeConnectionProxy:
+    """Drop-in replacement for a bare psycopg2 connection.
+
+    Wraps a ThreadedConnectionPool.  Each calling thread gets its own
+    dedicated connection; that connection is returned to the pool when
+    the thread is garbage-collected or the proxy is closed.
+    """
+    def __init__(self, pool: psycopg2.pool.ThreadedConnectionPool):
+        self._pool = pool
+        self._local = threading.local()
+
+    def _get_conn(self):
+        """Return (or create) the connection that belongs to this thread."""
+        if not hasattr(self._local, 'conn') or self._local.conn.closed:
+            self._local.conn = self._pool.getconn()
+        return self._local.conn
+
+    def cursor(self, *args, **kwargs):
+        return self._get_conn().cursor(*args, **kwargs)
+
+    def commit(self):
+        return self._get_conn().commit()
+
+    def rollback(self):
+        return self._get_conn().rollback()
+
+    def close(self):
+        """Return the calling thread's connection back to the pool."""
+        if hasattr(self._local, 'conn') and not self._local.conn.closed:
+            self._pool.putconn(self._local.conn)
+            del self._local.conn
+
+    def shutdown(self):
+        """Close the entire pool — call once on application exit."""
+        self._pool.closeall()
+
+
 # get config file path:
 # Calculate project root (one level up from fleet_management/)
 agv_dir_prefix = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
@@ -40,21 +84,30 @@ class FmMain():
 
         self.maps = maps
 
-        # establish connection to DB
+        # establish connection to DB via a ThreadedConnectionPool.
+        # minconn=1 keeps one connection warm at idle;
+        # maxconn=32 caps parallel connections (tune to Postgres max_connections).
         self.conn = None
         max_retries = 10
         for i in range(max_retries):
             try:
-                self.conn = psycopg2.connect(host=postgres_host, dbname=postgres_database,
-                                             user=postgres_user, password=postgres_password,
-                                             port=postgres_port)
-                if self.conn:
+                pool = psycopg2.pool.ThreadedConnectionPool(
+                    minconn=1,
+                    maxconn=32,
+                    host=postgres_host,
+                    dbname=postgres_database,
+                    user=postgres_user,
+                    password=postgres_password,
+                    port=postgres_port
+                )
+                if pool:
+                    self.conn = ThreadSafeConnectionProxy(pool)
                     print(f"Connected to database {postgres_database} at {postgres_host}")
                     break
             except (psycopg2.OperationalError, psycopg2.ProgrammingError) as e:
                 print(f"Attempt {i+1}/{max_retries}: Failed to connect to PostgreSQL. Retrying in 3s... ({e})")
                 time.sleep(3)
-        
+
         if not self.conn:
             print("Failed to connect to PostgreSQL database after multiple attempts.")
 
@@ -78,6 +131,11 @@ class FmMain():
         self.fleetnames = None
         self.serial_numbers = None
         self.job_ids = [] # initialize job ids dropdown menu
+
+        # Thread pool for parallel per-robot management.
+        # Size is capped at 32 to avoid overwhelming the DB connection;
+        # re-created when serial_numbers changes (see main_loop).
+        self._executor = None
 
         # terminal interaction: initialize fleet dropdown menu
         self.decision = ['yes', 'no']
@@ -159,9 +217,20 @@ class FmMain():
                         self.fleetname != '':
                     # Load robot traffic manager display callback
                     with self.lock:  # Ensure no other operation interferes
-                        # time.sleep(2.0)
                         for r_id in self.serial_numbers:
                             self.schedule_handler.manage_robot(self.fleetname, r_id, self.manufacturer, self.version)
+
+                        # Issue terminal traffic control summary once per cycle instead of per-robot
+                        traffic_dict = getattr(self.schedule_handler.traffic_handler, 'last_traffic_dict', None)
+                        if traffic_dict:
+                            colored_traffic = ", ".join([f"\033[96m{r}\033[0m: \033[93m{n}\033[0m" for r, n in traffic_dict.items()]) if isinstance(traffic_dict, dict) else traffic_dict
+                            self.schedule_handler.traffic_handler.task_handler.visualization_handler.terminal_log_visualization(
+                                f"Traffic Control: {{{colored_traffic}}}.",
+                                "FmMain",
+                                "main_loop",
+                                "critical"
+                            )
+
                         # Issue terminal redraw once per cycle instead of per-robot
                         self.schedule_handler.traffic_handler.task_handler.visualization_handler.terminal_graph_visualization()
         except KeyboardInterrupt:
@@ -176,6 +245,10 @@ class FmMain():
     def cleanup(self):
         """Clean up resources before exiting."""
         self.stop_timer_thread()
+        if self._executor is not None:
+            self._executor.shutdown(wait=True)
+        if self.conn is not None:
+            self.conn.shutdown()  # return all pool connections
         if self.mqtt_client:
             self.mqtt_client.loop_stop()
             self.mqtt_client.disconnect()

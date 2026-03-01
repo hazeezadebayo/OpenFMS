@@ -22,36 +22,51 @@ graph:
   C10:
   - - C11
     - 0.1
-  C11:
-  - - C10
-    - 0.1
   - - C12
     - 0.1
-  - - C13
+  - - C2
     - 0.1
   - - C9
     - 0.1
+  C11:
+  - - C10
+    - 0.1
+  - - C3
+    - 0.1
   C12:
-  - - C11
+  - - C10
+    - 0.1
+  - - C13
+    - 0.1
+  - - W12
     - 0.1
   C13:
+  - - C12
+    - 0.1
+  C2:
+  - - C10
+    - 0.1
+  C3:
   - - C11
     - 0.1
   C9:
-  - - C11
+  - - C10
+    - 0.1
+  W12:
+  - - C12
     - 0.1
 itinerary:
 - coordinate:
-  - 0.0
+  - 6.0
   - 0.0
   - -0.194
   - 0.98
-  description: home_dock
+  description: checkpoint
   fleet_id: kullar
   map_id: bina_1_floor_0
   loc_id: C10
 - coordinate:
-  - 6.0
+  - 12.0
   - 0.0
   - -0.097
   - 0.995
@@ -60,29 +75,56 @@ itinerary:
   map_id: bina_1_floor_0
   loc_id: C11
 - coordinate:
-  - 12.0
-  - 0.0
+  - 6.0
+  - -6.0
   - -0.194
   - 0.98
-  description: charge_dock
+  description: checkpoint
   fleet_id: kullar
   map_id: bina_1_floor_0
   loc_id: C12
 - coordinate:
-  - 6.0
+  - 12.0
   - -6.0
   - -0.097
   - 0.995
-  description: home_dock
+  description: station_dock
   fleet_id: kullar
   map_id: bina_1_floor_0
   loc_id: C13
+- coordinate:
+  - 0.0
+  - 0.0
+  - -0.194
+  - 0.98
+  description: home_dock
+  fleet_id: kullar
+  map_id: bina_1_floor_0
+  loc_id: C2
+- coordinate:
+  - 18.0
+  - 0.0
+  - -0.097
+  - 0.995
+  description: station_dock
+  fleet_id: kullar
+  map_id: bina_1_floor_0
+  loc_id: C3
 - coordinate:
   - 6.0
   - 6.0
   - -0.194
   - 0.98
-  description: charge_dock
+  description: home_dock
   fleet_id: kullar
   map_id: bina_1_floor_0
   loc_id: C9
+- coordinate:
+  - 7.591
+  - -4.409
+  - -0.097
+  - 0.995
+  description: waitpoint
+  fleet_id: kullar
+  map_id: bina_1_floor_0
+  loc_id: W12

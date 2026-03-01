@@ -6,6 +6,36 @@ from pathlib import Path
 
 from FmTaskHandler import FmTaskHandler
 
+from dataclasses import dataclass
+from typing import Any
+
+@dataclass
+class RobotContext:
+    agv_position: Any = None
+    agv_status: Any = None
+    errors: Any = None
+    horizon: Any = None
+    horizon_release: Any = None
+    base: Any = None
+    checkpoints: Any = None
+    waitpoints: Any = None
+    landmarks: Any = None
+    checkp_itinerary: Any = None
+    waitp_itinerary: Any = None
+    active_map_name: Any = None
+    order_id: Any = None
+    header_id: Any = None
+    order_timestamp: Any = None
+    merged_nodes: Any = None
+    dock_action_done: Any = None
+    pending_dock_action: Any = None
+    halt: Any = None
+    speed_min: Any = None
+    agv_size: Any = None
+    vel_lin_ang: Any = None
+    waitpoints_release: Any = None
+
+
 
 class FmTrafficHandler():
     """ task traffic handler """
@@ -29,29 +59,6 @@ class FmTrafficHandler():
 
         # initialize the task network dictionary
         self.task_dictionary = task_dict if task_dict else {}
-
-        # temporary feedback variables
-        self.temp_fb_agv_position = None
-        self.temp_fb_agv_status = None
-        self.temp_fb_errors = None
-        self.temp_fb_horizon = None
-        self.temp_fb_horizon_release = None
-        self.temp_fb_base = None
-        self.temp_fb_checkpoints = None
-        self.temp_fb_waitpoints = None
-        self.temp_fb_landmarks = None
-        self.temp_fb_checkp_itinerary = None
-        self.temp_fb_waitp_itinerary = None
-        self.temp_fb_active_map_name = None
-        self.temp_fb_order_id = None
-        self.temp_fb_header_id = None
-        self.temp_fb_order_timestamp = None
-        self.temp_fb_merged_nodes = None
-        self.temp_fb_dock_action_done = None
-        self.temp_fb_halt = None
-        self.temp_fb_speed_min = None
-        self.temp_fb_agv_size = None
-        self.temp_fb_vel_lin_ang = None
 
         self.temp_robot_delay_time = {}
         self.wait_time_default = 10.5 # [secs]
@@ -297,30 +304,7 @@ class FmTrafficHandler():
 # ----------------------------------------------------------------------------
 # ----------------------------------------------------------------------------
 
-    def _reset_temp_feedback(self):
-        """Reset all temporary feedback variables to prevent state leak between robots."""
-        self.temp_fb_agv_position = None
-        self.temp_fb_agv_status = None
-        self.temp_fb_errors = None
-        self.temp_fb_horizon = None
-        self.temp_fb_horizon_release = None
-        self.temp_fb_base = None
-        self.temp_fb_checkpoints = None
-        self.temp_fb_waitpoints = None
-        self.temp_fb_landmarks = None
-        self.temp_fb_checkp_itinerary = None
-        self.temp_fb_waitp_itinerary = None
-        self.temp_fb_active_map_name = None
-        self.temp_fb_order_id = None
-        self.temp_fb_header_id = None
-        self.temp_fb_order_timestamp = None
-        self.temp_fb_merged_nodes = None
-        self.temp_fb_dock_action_done = None
-        self.temp_fb_pending_dock_action = None
-        self.temp_fb_halt = None
-        self.temp_fb_speed_min = None
-        self.temp_fb_agv_size = None
-        self.temp_fb_vel_lin_ang = None
+
 
     def manage_traffic(self, f_id=None, r_id=None, m_id=None, v_id=None):
         """
@@ -334,23 +318,24 @@ class FmTrafficHandler():
         """
         traffic_control = None
         unassigned = None
+        ctx = None
 
         f_id = f_id or self.fleetname
         m_id = m_id or self.manufacturer
         v_id = v_id or self.version
 
         if r_id is None:
-            return traffic_control, unassigned
+            return traffic_control, unassigned, ctx
 
         try:
             print(" ")
-            # _fetch_current_robot_data resets temp_fb_ first, then populates it.
+            # _fetch_current_robot_data creates and returns ctx.
             # Only call _handle_robot_traffic_status if the fetch succeeded.
-            # If temp_fb_agv_position is still None, the DB fetch failed transiently
+            # If ctx.agv_position is still None, the DB fetch failed transiently
             # and we must skip — otherwise we'd act on the previous robot's stale state.
-            traffic_control, unassigned, mex_record = self._fetch_current_robot_data(f_id, r_id, m_id)
-            if self.temp_fb_agv_position is not None:
-                self._handle_robot_traffic_status(f_id, r_id, m_id, v_id, traffic_control, mex_record)
+            traffic_control, unassigned, mex_record, ctx = self._fetch_current_robot_data(f_id, r_id, m_id)
+            if ctx is not None and ctx.agv_position is not None:
+                self._handle_robot_traffic_status(f_id, r_id, m_id, v_id, traffic_control, mex_record, ctx)
         except (ValueError, TypeError) as error:
             # log viz:
             self.task_handler.visualization_handler.terminal_log_visualization(
@@ -358,9 +343,9 @@ class FmTrafficHandler():
                 "FmTrafficHandler",
                 "manage_traffic",
                 "info")
-            return traffic_control, unassigned
+            return traffic_control, unassigned, ctx
 
-        return traffic_control, unassigned
+        return traffic_control, unassigned, ctx
 
     # --------------------------------------------------------------------------------------------
 
@@ -379,45 +364,46 @@ class FmTrafficHandler():
         """
         # Always reset first — prevents stale data from a prior robot (or prior
         # successful cycle) from surviving into this robot's failed-fetch path.
-        self._reset_temp_feedback()
+
 
         fb_rec = self.fetch_mex_data(f_id, r_id=_r_id, m_id=m_id)
 
         try:
             # write to class variables for active robot params
-            # self.temp_fb_version = fb_rec["version"]
-            # self.temp_fb_manufacturer = fb_rec["manufacturer"]
-            # self.temp_fb_serial_number = serial_number
-            # self.temp_fb_fleet_name = information.get('fleet_name', 'none')
-            self.temp_fb_agv_position = fb_rec["robot_data"]["position"]
-            self.temp_fb_base = fb_rec["robot_data"]["base"]
-            self.temp_fb_horizon = fb_rec["robot_data"]["horizon"]
-            self.temp_fb_horizon_release = fb_rec["robot_data"]["horizon_release"]
-            self.temp_fb_checkpoints = fb_rec["robot_data"]["c_pnts"]
-            self.temp_fb_waitpoints = fb_rec["robot_data"]["w_pnts"]
-            self.temp_fb_checkp_itinerary = fb_rec["robot_data"]["c_pnts_pos"]
-            self.temp_fb_waitp_itinerary = fb_rec["robot_data"]["w_pnts_pos"]
-            self.temp_fb_waitpoints_release = fb_rec["robot_data"].get("w_pnts_release", [])
-            self.temp_fb_agv_status = fb_rec["robot_data"]["agv_status"]
-            self.temp_fb_order_timestamp = fb_rec["robot_data"]["order_timestamp"]
-            self.temp_fb_merged_nodes = fb_rec["robot_data"]["merged_nodes"]
-            self.temp_fb_dock_action_done = fb_rec["robot_data"]["dock_action_done"]
-            self.temp_fb_pending_dock_action = fb_rec["robot_data"].get("pending_dock_action", None)
-            self.temp_fb_halt = fb_rec["robot_data"]["halt"]
-            self.temp_fb_errors = fb_rec["robot_data"]["errors"]
-            self.temp_fb_active_map_name = fb_rec["robot_data"]["active_map"]
-            self.temp_fb_landmarks = fb_rec["robot_data"]["dock"]
-            self.temp_fb_order_id = fb_rec["robot_data"]["order_id"]
-            self.temp_fb_header_id = fb_rec["robot_data"]["header_id"]
-            self.temp_fb_agv_size = [fb_rec["robot_data"]["agv_size"][0],
-                                     fb_rec["robot_data"]["agv_size"][1]]
-            self.temp_fb_speed_min = fb_rec["robot_data"]["speed_min"]
-            self.temp_fb_vel_lin_ang = [fb_rec["robot_data"]["lin_vel"],
-                                        fb_rec["robot_data"]["ang_vel"]]
+            # ctx.version = fb_rec["version"]
+            # ctx.manufacturer = fb_rec["manufacturer"]
+            # ctx.serial_number = serial_number
+            # ctx.fleet_name = information.get('fleet_name', 'none')
+            ctx = RobotContext(
+                agv_position=fb_rec["robot_data"]["position"],
+                base=fb_rec["robot_data"]["base"],
+                horizon=fb_rec["robot_data"]["horizon"],
+                horizon_release=fb_rec["robot_data"]["horizon_release"],
+                checkpoints=fb_rec["robot_data"]["c_pnts"],
+                waitpoints=fb_rec["robot_data"]["w_pnts"],
+                checkp_itinerary=fb_rec["robot_data"]["c_pnts_pos"],
+                waitp_itinerary=fb_rec["robot_data"]["w_pnts_pos"],
+                waitpoints_release=fb_rec["robot_data"].get("w_pnts_release", []),
+                agv_status=fb_rec["robot_data"]["agv_status"],
+                order_timestamp=fb_rec["robot_data"]["order_timestamp"],
+                merged_nodes=fb_rec["robot_data"]["merged_nodes"],
+                dock_action_done=fb_rec["robot_data"]["dock_action_done"],
+                pending_dock_action=fb_rec["robot_data"].get("pending_dock_action", None),
+                halt=fb_rec["robot_data"]["halt"],
+                errors=fb_rec["robot_data"]["errors"],
+                active_map_name=fb_rec["robot_data"]["active_map"],
+                landmarks=fb_rec["robot_data"]["dock"],
+                order_id=fb_rec["robot_data"]["order_id"],
+                header_id=fb_rec["robot_data"]["header_id"],
+                agv_size=[fb_rec["robot_data"]["agv_size"][0], fb_rec["robot_data"]["agv_size"][1]],
+                speed_min=fb_rec["robot_data"]["speed_min"],
+                vel_lin_ang=[fb_rec["robot_data"]["lin_vel"], fb_rec["robot_data"]["ang_vel"]]
+            )
 
             mex_record = fb_rec["mex_data"]
 
-            traffic_ = fb_rec["traffic_control"]
+            self.last_traffic_dict = fb_rec["traffic_control"]
+            traffic_ = set([n for nodes in self.last_traffic_dict.values() for n in nodes]) if isinstance(self.last_traffic_dict, dict) else set(self.last_traffic_dict)
             unassigned = fb_rec["unassigned"]
         except KeyError as key_err:
             # log viz:
@@ -426,7 +412,7 @@ class FmTrafficHandler():
                 "FmTrafficHandler",
                 "_fetch_current_robot_data",
                 "warn")
-            return [], [], {}
+            return [], [], {}, None
         except (TypeError, ValueError) as specific_err:
             # log viz:
             self.task_handler.visualization_handler.terminal_log_visualization(
@@ -434,12 +420,12 @@ class FmTrafficHandler():
                 "FmTrafficHandler",
                 "_fetch_current_robot_data",
                 "warn")
-            return [], [], {}
-        return traffic_, unassigned, mex_record
+            return [], [], {}, None
+        return traffic_, unassigned, mex_record, ctx
 
     # --------------------------------------------------------------------------------------------
 
-    def _handle_robot_traffic_status(self, f_id, _r_id, m_id, v_id, traffic_control, mex_record):
+    def _handle_robot_traffic_status(self, f_id, _r_id, m_id, v_id, traffic_control, mex_record, ctx):
         """
         Manage robot traffic status by verifying next_stop occupancy and handling conflicts.
 
@@ -463,22 +449,11 @@ class FmTrafficHandler():
                 it handles the conflict either as a last-mile or waiting conflict.
                 b. If there is no conflict, it proceeds with a no-conflict action.
         """
-        # Log current traffic control state (critical)
-        if traffic_control:
-            # log viz:
-            colored_traffic = ", ".join([f"\033[96m{r}\033[0m: \033[93m{n}\033[0m" for r, n in traffic_control.items()]) if isinstance(traffic_control, dict) else traffic_control
-            self.task_handler.visualization_handler.terminal_log_visualization(
-                f"Traffic Control: {{{colored_traffic}}}.",
-                "FmTrafficHandler",
-                "_handle_robot_traffic_status",
-                "critical"
-            )
-
-        if not self.temp_fb_horizon:
+        if not ctx.horizon:
             return
 
         # The current robot's own base node — needed before mutex expansion.
-        reserved_checkpoint = self.temp_fb_base
+        reserved_checkpoint = ctx.base
 
         # -----------------------------------------------------------------------
         # MUTEX GROUP EXPANSION
@@ -493,8 +468,8 @@ class FmTrafficHandler():
         # "Other robot" = node is in traffic_control AND it is not reserved_checkpoint.
         # -----------------------------------------------------------------------
 
-        # traffic_control is now potentially a dict {robot_id: [node_ids]}, extract nodes for logic
-        active_traffic_nodes = set([n for nodes in traffic_control.values() for n in nodes]) if isinstance(traffic_control, dict) else set(traffic_control)
+        # traffic_control is now an O(1) set of all occupied nodes
+        active_traffic_nodes = traffic_control
         
         expanded_traffic = list(active_traffic_nodes)
         for group in self.mutex_groups:
@@ -513,22 +488,22 @@ class FmTrafficHandler():
         # -----------------------------------------------------------------------
         
         # Determine base coordinate based on reserved checkpoint type
-        base_coordinate = self._get_base_coordinate(reserved_checkpoint)
+        base_coordinate = self._get_base_coordinate(reserved_checkpoint, ctx)
 
         # Retrieve next stop details
-        next_stop_id = self.temp_fb_horizon[0]
-        next_stop_id_release = self.temp_fb_horizon_release[0]
+        next_stop_id = ctx.horizon[0]
+        next_stop_id_release = ctx.horizon_release[0]
 
-        idx = self.temp_fb_checkpoints.index(next_stop_id)
-        next_stop_coordinate = self.temp_fb_checkp_itinerary[idx]
+        idx = ctx.checkpoints.index(next_stop_id)
+        next_stop_coordinate = ctx.checkp_itinerary[idx]
 
         # Calculate distance from current position to base coordinate
         dist_to_base = self._calculate_distance(
-            self.temp_fb_agv_position[0], self.temp_fb_agv_position[1],
+            ctx.agv_position[0], ctx.agv_position[1],
             base_coordinate[0], base_coordinate[1]
         )
 
-        has_order_minute_passed = self.check_minute_passed(self.temp_fb_order_timestamp, 0.25)
+        has_order_minute_passed = self.check_minute_passed(ctx.order_timestamp, 0.25)
 
         # Log current status (critical information)
         # log viz:
@@ -536,33 +511,33 @@ class FmTrafficHandler():
             f"\nR_id: {_r_id}. \n"
             f"Reserved_checkpoint: {reserved_checkpoint}, "
             f"Next_stop_id: {next_stop_id}, "
-            f"Moving: {self.temp_fb_agv_status}  \n"
-            f"Horizon: {self.temp_fb_horizon}, \n"
+            f"Moving: {ctx.agv_status}  \n"
+            f"Horizon: {ctx.horizon}, \n"
             f"Dist_to_base: {dist_to_base}, "
             f"has_order_minute_passed: {has_order_minute_passed}, "
-            f"temp_fb_dock_action_done: {self.temp_fb_dock_action_done}, "
-            f"isCheckpoint: {(self.temp_fb_agv_status == 'red' and reserved_checkpoint not in self.temp_fb_landmarks)}, "
-            f"isStationandDocked: {(self.temp_fb_agv_status == 'red' and reserved_checkpoint in self.temp_fb_landmarks and self.temp_fb_dock_action_done)}.",
+            f"temp_fb_dock_action_done: {ctx.dock_action_done}, "
+            f"isCheckpoint: {(ctx.agv_status == 'red' and reserved_checkpoint not in ctx.landmarks)}, "
+            f"isStationandDocked: {(ctx.agv_status == 'red' and reserved_checkpoint in ctx.landmarks and ctx.dock_action_done)}.",
             "FmTrafficHandler",
             "_handle_robot_traffic_status",
-            "critical") # info
+            "info")
 
         try:
             # Define primary conditions for node reservations and conflict resolutions.
-            is_ready = self.temp_fb_agv_status == 'red'
-            is_safe = (reserved_checkpoint not in self.temp_fb_landmarks) or \
-                (reserved_checkpoint in self.temp_fb_landmarks and self.temp_fb_dock_action_done)
-            is_within_range = dist_to_base <= (0.8 * float(self.temp_fb_agv_size[1]))
+            is_ready = ctx.agv_status == 'red'
+            is_safe = (reserved_checkpoint not in ctx.landmarks) or \
+                (reserved_checkpoint in ctx.landmarks and ctx.dock_action_done)
+            is_within_range = dist_to_base <= (0.8 * float(ctx.agv_size[1]))
             is_different_stop = reserved_checkpoint != next_stop_id
             conditions_met = is_ready and is_safe and is_different_stop and \
                             (not next_stop_id_release) and has_order_minute_passed and \
-                            (not self.temp_fb_halt) and is_within_range
+                            (not ctx.halt) and is_within_range
 
             if conditions_met:
                 # Handle special waitpoint case
                 # check if we are having a waitpoint case. a special case wx cx cy.
-                if self.temp_fb_merged_nodes[0].startswith('W'):
-                    self._handle_waitpoint_case(f_id, _r_id, m_id, v_id)
+                if ctx.merged_nodes[0].startswith('W'):
+                    self._handle_waitpoint_case(f_id, _r_id, m_id, v_id, ctx)
                     return
 
                 # Check if next stop is occupied in traffic control
@@ -578,15 +553,15 @@ class FmTrafficHandler():
                     # normal plan: last mile dock is either single home dock if transport
                     # or single charge or home dock directly if move or charge.
                     # Determine conflict resolution method based on last-mile conditions
-                    if (next_stop_id in self.temp_fb_landmarks and
-                        len(self.temp_fb_horizon) == 1 and
-                        self.temp_fb_landmarks[2] != 'loop'):
+                    if (next_stop_id in ctx.landmarks and
+                        len(ctx.horizon) == 1 and
+                        ctx.landmarks[2] != 'loop'):
                         # ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
                         # LOGIC FOR SKIPPING LAST MILE NODES!!!
                         # ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
                         self._handle_last_mile_conflict_case(f_id, _r_id, m_id, v_id,
                                                             reserved_checkpoint, next_stop_id,
-                                                            checking_traffic_control)
+                                                            checking_traffic_control, ctx)
                     else:
                         # ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
                         # _handle_waiting_robot_conflict_case
@@ -609,14 +584,14 @@ class FmTrafficHandler():
                                                             next_stop_id, checking_traffic_control,
                                                             reserved_checkpoint,
                                                             next_stop_coordinate,
-                                                            mex_record)
+                                                            mex_record, ctx)
 
                 else:
-                    self._handle_no_conflict_case(f_id, _r_id, m_id, v_id)
+                    self._handle_no_conflict_case(f_id, _r_id, m_id, v_id, ctx)
 
             elif (is_ready and not is_different_stop and
                 (not next_stop_id_release) and has_order_minute_passed and
-                (not self.temp_fb_halt) and is_within_range):
+                (not ctx.halt) and is_within_range):
                 # log viz:
                 self.task_handler.visualization_handler.terminal_log_visualization(
                     f"Robot {_r_id} occupies its target node. Converting to base.",
@@ -624,12 +599,12 @@ class FmTrafficHandler():
                     "_handle_robot_traffic_status",
                     "info"
                 )
-                self._handle_no_conflict_case(f_id, _r_id, m_id, v_id)
+                self._handle_no_conflict_case(f_id, _r_id, m_id, v_id, ctx)
 
             elif (is_ready and (not next_stop_id_release) and has_order_minute_passed and
-                  (not self.temp_fb_halt) and is_within_range and
-                  (reserved_checkpoint in self.temp_fb_landmarks) and
-                  not self.temp_fb_dock_action_done):
+                  (not ctx.halt) and is_within_range and
+                  (reserved_checkpoint in ctx.landmarks) and
+                  not ctx.dock_action_done):
                 # log viz:
                 self.task_handler.visualization_handler.terminal_log_visualization(
                     f"Robot {_r_id} at destination but yet to dock. Pinging...",
@@ -637,7 +612,7 @@ class FmTrafficHandler():
                     "_handle_robot_traffic_status",
                     "info"
                 )
-                self._handle_dock_reminder(f_id, _r_id, m_id, v_id)
+                self._handle_dock_reminder(f_id, _r_id, m_id, v_id, ctx)
 
         except (ValueError, TypeError) as error:
             # log viz:
@@ -651,7 +626,7 @@ class FmTrafficHandler():
 
     # --------------------------------------------------------------------------------------------
 
-    def _get_base_coordinate(self, reserved_checkpoint):
+    def _get_base_coordinate(self, reserved_checkpoint, ctx):
         """
         Determine base coordinate based on the reserved checkpoint.
 
@@ -661,28 +636,28 @@ class FmTrafficHandler():
         if reserved_checkpoint:
             if reserved_checkpoint.startswith('W'):
                 try:
-                    idx = self.temp_fb_waitpoints.index(reserved_checkpoint)
-                    return self.temp_fb_waitp_itinerary[idx]
+                    idx = ctx.waitpoints.index(reserved_checkpoint)
+                    return ctx.waitp_itinerary[idx]
                 except ValueError:
                     pass  # Fallback to default if not found
             else:
                 try:
-                    idx = self.temp_fb_checkpoints.index(reserved_checkpoint)
-                    return self.temp_fb_checkp_itinerary[idx]
+                    idx = ctx.checkpoints.index(reserved_checkpoint)
+                    return ctx.checkp_itinerary[idx]
                 except ValueError:
                     pass
         # Default coordinate if reserved_checkpoint is None or not found
-        return [self.temp_fb_agv_position[0], self.temp_fb_agv_position[1]]
+        return [ctx.agv_position[0], ctx.agv_position[1]]
 
     # --------------------------------------------------------------------------------------------
 
-    def _handle_dock_reminder(self, f_id, _r_id, m_id, v_id):
+    def _handle_dock_reminder(self, f_id, _r_id, m_id, v_id, ctx):
         """
         Pings a pending instant action (e.g., 'dock') to a robot that is at a node 
         but hasn't completed the action yet, maintaining VDA 5050 idempotency by
         using the EXACT original order action dictionary.
         """
-        if not self.temp_fb_pending_dock_action:
+        if not ctx.pending_dock_action:
             self.task_handler.visualization_handler.terminal_log_visualization(
                 f"Robot {_r_id} at destination but no pending action found to ping.",
                 "FmTrafficHandler",
@@ -691,11 +666,11 @@ class FmTrafficHandler():
             )
             return
 
-        action_list = [self.temp_fb_pending_dock_action]
+        action_list = [ctx.pending_dock_action]
         # Use a new header id for the new message wrapper, but keep the actionId identical
-        header_id = self.temp_fb_header_id + 1
+        header_id = ctx.header_id + 1
         self.task_handler.instant_actions_handler.build_instant_action_msg(f_id, _r_id, header_id, v_id, m_id, action_list)
-        print("Dock action pinged to robot: {} with original actionId: {}".format(_r_id, self.temp_fb_pending_dock_action.get("actionId")))
+        print("Dock action pinged to robot: {} with original actionId: {}".format(_r_id, ctx.pending_dock_action.get("actionId")))
 
     # --------------------------------------------------------------------------------------------
 
@@ -780,7 +755,7 @@ class FmTrafficHandler():
 
     # --------------------------------------------------------------------------------------------
 
-    def _handle_waitpoint_case(self, f_id, _r_id, m_id=None, v_id=None):
+    def _handle_waitpoint_case(self, f_id, _r_id, m_id=None, v_id=None, ctx=None):
         """
         Parameters:
             _r_id (str): Robot ID.
@@ -802,13 +777,13 @@ class FmTrafficHandler():
 
         try:
             # get new active map
-            temp_map_name = self.get_map(f_id, self.temp_fb_checkpoints[0], self.temp_fb_horizon[0])
+            temp_map_name = self.get_map(f_id, ctx.checkpoints[0], ctx.horizon[0])
             # ensure that map name is different from current map
             # Only compare maps if we already know the active map.
             # On startup, temp_fb_active_map_name is None because the robot
             # hasn't received a downloadMap yet — comparing None to a map_id
             # would always trigger a false 'elevator' warning every cycle.
-            if self.temp_fb_active_map_name is not None and self.temp_fb_active_map_name != temp_map_name:
+            if ctx.active_map_name is not None and ctx.active_map_name != temp_map_name:
                 # then we have a problem
                 self.task_handler.visualization_handler.terminal_log_visualization(
                     f"r_id: {_r_id} is in an elevator but can not fetch new map.",
@@ -818,15 +793,15 @@ class FmTrafficHandler():
             # estimate goal nodes time of arrival
             temp_fb_node_eta = self.calculate_estimated_arrival_time(self.wait_time_default)
             # prepare the order update message
-            header_id = self.temp_fb_header_id + 1
-            order_id, update_id = self.task_handler.generate_new_order_id(self.temp_fb_order_id)
-            b_node, h_nodes, h_edges = self.task_handler.order_handler.create_order(self.temp_fb_checkpoints[1:], # = [self.temp_fb_base]+self.temp_fb_horizon, # self.temp_fb_checkpoints, # checkpoints
-                                                            self.temp_fb_waitpoints, # waitpoints,
-                                                            self.temp_fb_checkp_itinerary[1:], # agv_itinerary,
-                                                            self.temp_fb_waitp_itinerary, # wait_itinerary,
-                                                            self.temp_fb_landmarks, # landmark)
+            header_id = ctx.header_id + 1
+            order_id, update_id = self.task_handler.generate_new_order_id(ctx.order_id)
+            b_node, h_nodes, h_edges = self.task_handler.order_handler.create_order(ctx.checkpoints[1:], # = [ctx.base]+ctx.horizon, # ctx.checkpoints, # checkpoints
+                                                            ctx.waitpoints, # waitpoints,
+                                                            ctx.checkp_itinerary[1:], # agv_itinerary,
+                                                            ctx.waitp_itinerary, # wait_itinerary,
+                                                            ctx.landmarks, # landmark)
                                                             temp_map_name, # active map for which this nav will be performed
-                                                            [self.temp_fb_base]+self.temp_fb_horizon, # release (next_stop_id)
+                                                            [ctx.base]+ctx.horizon, # release (next_stop_id)
                                                             temp_fb_node_eta) # time of arrival at the newly released node
             self.task_handler.order_handler.build_order_msg(f_id,
                                                 _r_id,
@@ -855,11 +830,11 @@ class FmTrafficHandler():
 
         graph = self.task_handler.build_graph(task_dict)
 
-        for dock_node in self.temp_fb_landmarks[start_idx:]:
+        for dock_node in ctx.landmarks[start_idx:]:
             # skip it, since its occupied | 'green'
             # log viz:
             self.task_handler.visualization_handler.terminal_log_visualization(
-                f"checking docks {self.temp_fb_landmarks[start_idx:]} for availability.",
+                f"checking docks {ctx.landmarks[start_idx:]} for availability.",
                 "FmTrafficHandler",
                 "check_available_last_mile_dock",
                 "info")
@@ -876,18 +851,18 @@ class FmTrafficHandler():
                     "info")
                 if paths:
                     if len(paths) != 0 and paths[0]:
-                        self.temp_fb_checkpoints = paths[0]
-                        self.temp_fb_checkp_itinerary = self.task_handler.fm_get_itinerary(self.temp_fb_checkpoints, task_dict)
-                        self.temp_fb_waitpoints = self.task_handler.fm_extract_unique_waitpoints(self.temp_fb_checkpoints, task_dict)
-                        self.temp_fb_waitp_itinerary = self.task_handler.fm_get_itinerary(self.temp_fb_waitpoints, task_dict)
-                        self.temp_fb_horizon = self.temp_fb_checkpoints # [1:]
+                        ctx.checkpoints = paths[0]
+                        ctx.checkp_itinerary = self.task_handler.fm_get_itinerary(ctx.checkpoints, task_dict)
+                        ctx.waitpoints = self.task_handler.fm_extract_unique_waitpoints(ctx.checkpoints, task_dict)
+                        ctx.waitp_itinerary = self.task_handler.fm_get_itinerary(ctx.waitpoints, task_dict)
+                        ctx.horizon = ctx.checkpoints # [1:]
                         available_last_mile_dock = True
         return available_last_mile_dock
 
     # --------------------------------------------------------------------------------------------
 
     def _handle_last_mile_conflict_case(self, f_id, _r_id, m_id, v_id, reserved_checkpoint,
-                                        next_stop_id, traffic_control, task_dict=None):
+                                        next_stop_id, traffic_control, task_dict=None, ctx=None):
         """
         # 1. is this next node id occupied?
         # 2. is next node id a home or charge dock?
@@ -903,22 +878,22 @@ class FmTrafficHandler():
 
         # normal plan: last mile dock is either single home dock if transport
         # or single charge or home dock directly if move or charge.
-        if len(self.temp_fb_horizon) != 1:
+        if len(ctx.horizon) != 1:
             return
 
         # landmark = [payload_kg 0, task_priority 1, task_name 2, from_loc_id 3, to_loc_id 4, home_docks 5:]
 
         # if next stop id is in the last mile dock. we need to suggest alternative if they exist
-        if (next_stop_id in self.temp_fb_landmarks[5:]) and (self.temp_fb_landmarks[2] == "transport"):
+        if (next_stop_id in ctx.landmarks[5:]) and (ctx.landmarks[2] == "transport"):
             # but not the last dock in the list i.e. we have more dock stations that may be used.
-            if len(self.temp_fb_landmarks[5:]) > 1:
+            if len(ctx.landmarks[5:]) > 1:
                 available_last_mile_dock = self.check_available_last_mile_dock(
                     reserved_checkpoint,
                     traffic_control,
                     task_dict,
                     4)
-        elif (next_stop_id in self.temp_fb_landmarks[3:]) and (self.temp_fb_landmarks[2] in ["move", "charge"]):
-            if len(self.temp_fb_landmarks[3:]) > 1:
+        elif (next_stop_id in ctx.landmarks[3:]) and (ctx.landmarks[2] in ["move", "charge"]):
+            if len(ctx.landmarks[3:]) > 1:
                 available_last_mile_dock = self.check_available_last_mile_dock(
                     reserved_checkpoint,
                     traffic_control,
@@ -926,7 +901,7 @@ class FmTrafficHandler():
                     2)
 
         if available_last_mile_dock:
-            self._handle_no_conflict_case(f_id, _r_id, m_id, v_id) # publish it.
+            self._handle_no_conflict_case(f_id, _r_id, m_id, v_id, ctx) # publish it.
         else:
             # log viz:
             self.task_handler.visualization_handler.terminal_log_visualization(
@@ -978,7 +953,7 @@ class FmTrafficHandler():
 
     # --------------------------------------------------------------------------------------------
 
-    def _handle_no_conflict_case(self, f_id, _r_id, m_id=None, v_id=None):
+    def _handle_no_conflict_case(self, f_id, _r_id, m_id=None, v_id=None, ctx=None):
         """
         Parameters:
             _r_id (str): Robot ID.
@@ -1000,13 +975,13 @@ class FmTrafficHandler():
 
         try:
             # get new active map
-            temp_map_name = self.get_map(f_id, self.temp_fb_checkpoints[0], self.temp_fb_horizon[0])
+            temp_map_name = self.get_map(f_id, ctx.checkpoints[0], ctx.horizon[0])
             # ensure that map name is different from current map
             # Only compare maps if we already know the active map.
             # On startup, temp_fb_active_map_name is None because the robot
             # hasn't received a downloadMap yet — comparing None to a map_id
             # would always trigger a false 'elevator' warning every cycle.
-            if self.temp_fb_active_map_name is not None and self.temp_fb_active_map_name != temp_map_name:
+            if ctx.active_map_name is not None and ctx.active_map_name != temp_map_name:
                 # then we have a problem
                 self.task_handler.visualization_handler.terminal_log_visualization(
                     f"r_id: {_r_id} is in an elevator but can not fetch new map.",
@@ -1014,26 +989,26 @@ class FmTrafficHandler():
                     "_handle_no_conflict_case",
                     "warn")
             # estimate goal nodes time of arrival
-            eta = self.estimate_time_to_node(robot_pos = self.temp_fb_agv_position,
-                node_pos = self.temp_fb_checkp_itinerary[self.temp_fb_checkpoints.index(self.temp_fb_horizon[0])],
-                min_vel = float(self.temp_fb_speed_min))
+            eta = self.estimate_time_to_node(robot_pos = ctx.agv_position,
+                node_pos = ctx.checkp_itinerary[ctx.checkpoints.index(ctx.horizon[0])],
+                min_vel = float(ctx.speed_min))
             temp_fb_node_eta = self.calculate_estimated_arrival_time(eta)
             # check if node actions exist
             self._handle_node_action(f_id, _r_id, m_id, v_id,
-                                     self.temp_fb_header_id,
-                                     self.temp_fb_base,
-                                     self.temp_fb_dock_action_done,
-                                     self.temp_fb_landmarks)
+                                     ctx.header_id,
+                                     ctx.base,
+                                     ctx.dock_action_done,
+                                     ctx.landmarks)
             # prepare order update message
-            header_id = self.temp_fb_header_id + 1
-            order_id, update_id = self.task_handler.generate_new_order_id(self.temp_fb_order_id)
-            b_node, h_nodes, h_edges = self.task_handler.order_handler.create_order(self.temp_fb_checkpoints, # checkpoints
-                                                            self.temp_fb_waitpoints, # waitpoints,
-                                                            self.temp_fb_checkp_itinerary, # agv_itinerary,
-                                                            self.temp_fb_waitp_itinerary, # wait_itinerary,
-                                                            self.temp_fb_landmarks, # landmark
+            header_id = ctx.header_id + 1
+            order_id, update_id = self.task_handler.generate_new_order_id(ctx.order_id)
+            b_node, h_nodes, h_edges = self.task_handler.order_handler.create_order(ctx.checkpoints, # checkpoints
+                                                            ctx.waitpoints, # waitpoints,
+                                                            ctx.checkp_itinerary, # agv_itinerary,
+                                                            ctx.waitp_itinerary, # wait_itinerary,
+                                                            ctx.landmarks, # landmark
                                                             temp_map_name, # active map for which this nav will be performed
-                                                            self.temp_fb_horizon[0:], # release (next_stop_id)
+                                                            ctx.horizon[0:], # release (next_stop_id)
                                                             temp_fb_node_eta) # time of arrival at the newly released node
             self.task_handler.order_handler.build_order_msg(f_id,
                                                 _r_id,
@@ -1569,7 +1544,7 @@ class FmTrafficHandler():
 
     # --------------------------------------------------------------------------------------------
 
-    def _handle_active_mex_conflict(self, f_id, r_id, m_id, v_id, next_stop_id, traffic_control, reserved_checkpoint, next_stop_coordinate, fb_rec):
+    def _handle_active_mex_conflict(self, f_id, r_id, m_id, v_id, next_stop_id, traffic_control, reserved_checkpoint, next_stop_coordinate, fb_rec, ctx):
         """
         Parameters
             r_id (str): The ID of the robot currently being processed.
@@ -1645,7 +1620,7 @@ class FmTrafficHandler():
             (not mex_halt) and
             (len(mex_horizon) > 0) and
             (not mex_merged_nodes[0].startswith('W')) and
-            (not self.temp_fb_merged_nodes[0].startswith('W'))):
+            (not ctx.merged_nodes[0].startswith('W'))):
 
             # Ensure once again that mex_horizon is not empty before accessing its elements
             if mex_horizon and mex_horizon[0] == reserved_checkpoint:
@@ -1656,23 +1631,23 @@ class FmTrafficHandler():
                     "_handle_active_mex_conflict",
                     "info")
 
-                priority_val = self.map_priority(self.temp_fb_landmarks[1])
+                priority_val = self.map_priority(ctx.landmarks[1])
                 mex_priority_val = self.map_priority(mex_landmarks[1])
-                reserved_checkpoint_coordinate = self.temp_fb_checkp_itinerary[self.temp_fb_checkpoints.index(reserved_checkpoint)]
+                reserved_checkpoint_coordinate = ctx.checkp_itinerary[ctx.checkpoints.index(reserved_checkpoint)]
 
                 if priority_val > mex_priority_val:
                     temp_fb_wait_time, mex_wait_time = self.handle_priority_higher(
                         r_id, next_stop_id, next_stop_coordinate,
                         mex_r_id, mex_waitpoints, mex_wait_itinerary, mex_horizon, mex_checkpoints, mex_agv_itinerary, mex_base, 
                         mex_agv_position, mex_speed_min,
-                        traffic_control, reserved_checkpoint, reserved_checkpoint_coordinate)
+                        traffic_control, reserved_checkpoint, reserved_checkpoint_coordinate, ctx=ctx)
 
                 elif priority_val < mex_priority_val:
                     temp_fb_wait_time, mex_wait_time = self.handle_priority_lower(
                         r_id, next_stop_id, next_stop_coordinate,
                         mex_r_id, mex_waitpoints, mex_wait_itinerary, mex_horizon, mex_checkpoints, mex_agv_itinerary, mex_base, 
                         mex_agv_position, mex_speed_min,
-                        traffic_control, reserved_checkpoint, reserved_checkpoint_coordinate)
+                        traffic_control, reserved_checkpoint, reserved_checkpoint_coordinate, ctx=ctx)
 
                 else:
                     self.temp_robot_delay_time[mex_r_id] = self.temp_robot_delay_time.get(mex_r_id, (0,0))
@@ -1689,7 +1664,7 @@ class FmTrafficHandler():
                             r_id, next_stop_id, next_stop_coordinate,
                             mex_r_id, mex_waitpoints, mex_wait_itinerary, mex_horizon, mex_checkpoints, mex_agv_itinerary, mex_base, 
                             mex_agv_position, mex_speed_min,
-                            traffic_control, reserved_checkpoint, reserved_checkpoint_coordinate)
+                            traffic_control, reserved_checkpoint, reserved_checkpoint_coordinate, ctx=ctx)
 
                     # if their curr robot wait time is lower or wait times are also equal then just treat as low priority
                     elif float(self.temp_robot_delay_time[r_id][1]) < float(self.temp_robot_delay_time[mex_r_id][1]) or \
@@ -1698,7 +1673,7 @@ class FmTrafficHandler():
                             r_id, next_stop_id, next_stop_coordinate,
                             mex_r_id, mex_waitpoints, mex_wait_itinerary, mex_horizon, mex_checkpoints, mex_agv_itinerary, mex_base, 
                             mex_agv_position, mex_speed_min,
-                            traffic_control, reserved_checkpoint, reserved_checkpoint_coordinate)
+                            traffic_control, reserved_checkpoint, reserved_checkpoint_coordinate, ctx=ctx)
 
                 if (temp_fb_wait_time is not None) or (mex_wait_time is not None):
                     self.update_robot_status(f_id,
@@ -1722,7 +1697,8 @@ class FmTrafficHandler():
                                             mex_dock_action_done,
                                             mex_active_map_name,
                                             mex_order_id,
-                                            mex_header_id)
+                                            mex_header_id,
+                                            ctx=ctx)
                 else:
                     # ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
                     #  we can try rerouting (✔️)
@@ -1732,9 +1708,10 @@ class FmTrafficHandler():
                                                         reserved_checkpoint,
                                                         next_stop_id,
                                                         mex_horizon, 
-                                                        traffic_control)
+                                                        traffic_control,
+                                                        ctx)
                     if reroute_status:
-                        self.temp_fb_horizon = self.temp_fb_checkpoints
+                        ctx.horizon = ctx.checkpoints
                         # publish the targets to the robots.
                         self.update_robot_status(f_id,
                                                 r_id,
@@ -1757,7 +1734,8 @@ class FmTrafficHandler():
                                                 mex_dock_action_done,
                                                 mex_active_map_name,
                                                 mex_order_id,
-                                                mex_header_id)
+                                                mex_header_id,
+                                                ctx=ctx)
                     else:
                         # log viz:
                         self.task_handler.visualization_handler.terminal_log_visualization(
@@ -1792,7 +1770,7 @@ class FmTrafficHandler():
 
     # --------------------------------------------------------------------------------------------
 
-    def reroute_robot(self, f_id, r_id, reserved_checkpoint, next_stop_id, mex_horizon, traffic_control, task_dict=None):
+    def reroute_robot(self, f_id, r_id, reserved_checkpoint, next_stop_id, mex_horizon, traffic_control, ctx, task_dict=None):
         """
         Reroutes a robot from its current checkpoint to a new destination, handling traffic and waitpoints.
         1. fetch current robots landmark: task_type = transport, charge or move
@@ -1817,13 +1795,13 @@ class FmTrafficHandler():
         task_dict = task_dict or self.task_dictionary
 
         reroute_status = False
-        if next_stop_id in self.temp_fb_landmarks:
+        if next_stop_id in ctx.landmarks:
             # then we can not skip it, we need to wait for a resolution.
-            reroute_status = self._handle_no_skip_case(r_id, reserved_checkpoint, next_stop_id, task_dict)
+            reroute_status = self._handle_no_skip_case(r_id, reserved_checkpoint, next_stop_id, task_dict, ctx)
         else:
             # we can skip this nex_stop_id node and try to plan a path to its upper one.
             # however, check if there is an alternative path to it first
-            reroute_status = self._handle_skip_case(r_id, reserved_checkpoint, next_stop_id, mex_horizon, traffic_control, task_dict)
+            reroute_status = self._handle_skip_case(r_id, reserved_checkpoint, next_stop_id, task_dict, ctx)
         
         if reroute_status is False:
             # check if we do not have to skip, but perhaps we can go to a temporary wait.
@@ -1831,7 +1809,7 @@ class FmTrafficHandler():
             # we are not gonna spoof a c19 into a w19. instead we would simply insert a c19 into the horizon and path
             # so that the robot can go there and wait for the next stop to be available.
             # so we call find temporary wait node here
-            yielding_goal_node = self.temp_fb_horizon[-1] if self.temp_fb_horizon else reserved_checkpoint
+            yielding_goal_node = ctx.horizon[-1] if ctx.horizon else reserved_checkpoint
             cy_id, _, cy_pos = self._find_temporary_waitpoint(
                 yielding_base_node=reserved_checkpoint,
                 yielding_goal_node=yielding_goal_node,
@@ -1840,26 +1818,20 @@ class FmTrafficHandler():
                 traffic_control=traffic_control
             )
 
-            self.task_handler.visualization_handler.terminal_log_visualization(
-                f"NEIGHBOR YIELD: Fallback Temporary Waitpoint Check: cy_id: {cy_id}, cy_pos: {cy_pos}.",
-                "FmTrafficHandler",
-                "reroute_robot",
-                "info")
-                        
             if cy_id:
                 # Need to add yield point to checkpoints/horizon for it to be actually targeted
-                self.temp_fb_checkpoints.insert(0, cy_id)
-                self.temp_fb_checkpoints.insert(1, reserved_checkpoint)
+                ctx.checkpoints.insert(0, cy_id)
+                ctx.checkpoints.insert(1, reserved_checkpoint)
                 
                 # Insert corresponding coordinates
-                self.temp_fb_checkp_itinerary.insert(0, cy_pos)
+                ctx.checkp_itinerary.insert(0, cy_pos)
                 # For returning to the reserved checkpoint, we use the original reserved_checkpoint_coordinate
                 # Here we fetch it from the itinerary (it should be at index 0 currently)
-                reserved_checkpoint_coordinate = self.temp_fb_checkp_itinerary[0]
-                self.temp_fb_checkp_itinerary.insert(1, reserved_checkpoint_coordinate)
+                reserved_checkpoint_coordinate = ctx.checkp_itinerary[0]
+                ctx.checkp_itinerary.insert(1, reserved_checkpoint_coordinate)
 
                 # Update horizon to force detour
-                self.temp_fb_horizon[0:0] = [cy_id, reserved_checkpoint] 
+                ctx.horizon[0:0] = [cy_id, reserved_checkpoint] 
 
                 reroute_status = True
 
@@ -1872,7 +1844,7 @@ class FmTrafficHandler():
         return reroute_status
 
 
-    def _handle_no_skip_case(self, r_id, reserved_checkpoint, next_stop_id, task_dict):
+    def _handle_no_skip_case(self, r_id, reserved_checkpoint, next_stop_id, task_dict, ctx):
         """Handles rerouting logic when the next stop is a landmark."""
         reroute_status = False
         paths = self.task_handler.fm_shortest_paths(reserved_checkpoint, next_stop_id, task_dict)
@@ -1890,22 +1862,22 @@ class FmTrafficHandler():
                 sub_path_waitpoints = self.task_handler.fm_extract_unique_waitpoints(sub_path_checkps, task_dict)
                 sub_path_wait_itinerary = self.task_handler.fm_get_itinerary(sub_path_waitpoints, task_dict)
                 # Replace first two elements in checkpoints and itinerary
-                self._replace_path_elements(2, sub_path_checkps, sub_path_itinerary, reserved_checkpoint, next_stop_id)
+                self._replace_path_elements(2, sub_path_checkps, sub_path_itinerary, ctx, reserved_checkpoint, next_stop_id)
                 # Handle waitpoints and their itinerary
-                self._update_waitpoints(next_stop_id, sub_path_waitpoints, sub_path_wait_itinerary)
+                self._update_waitpoints(next_stop_id, sub_path_waitpoints, sub_path_wait_itinerary, ctx)
                 reroute_status = True
         return reroute_status
 
 
-    def _handle_skip_case(self, r_id, reserved_checkpoint, next_stop_id, mex_horizon, traffic_control, task_dict):
+    def _handle_skip_case(self, r_id, reserved_checkpoint, next_stop_id, task_dict, ctx):
         """Handles rerouting logic when the next stop is not a landmark."""
         reroute_status = False
         # first handle no skip next_stop_id case, as it might not be necessary to skip it if this works out.
-        reroute_status = self._handle_no_skip_case(r_id, reserved_checkpoint, next_stop_id, task_dict)
+        reroute_status = self._handle_no_skip_case(r_id, reserved_checkpoint, next_stop_id, task_dict, ctx)
         # if false, then try to go for the upper node from the horizon.
         if reroute_status is False:
-            if len(self.temp_fb_horizon) > 1:
-                upper_stop_id = self.temp_fb_horizon[1]
+            if len(ctx.horizon) > 1:
+                upper_stop_id = ctx.horizon[1]
                 paths = self.task_handler.fm_shortest_paths(reserved_checkpoint, upper_stop_id, task_dict)
                 # log viz:
                 self.task_handler.visualization_handler.terminal_log_visualization(
@@ -1921,37 +1893,37 @@ class FmTrafficHandler():
                         sub_path_waitpoints = self.task_handler.fm_extract_unique_waitpoints(sub_path_checkps, task_dict)
                         sub_path_wait_itinerary = self.task_handler.fm_get_itinerary(sub_path_waitpoints, task_dict)
                         # Replace first three elements in checkpoints and itinerary
-                        self._replace_path_elements(3, sub_path_checkps, sub_path_itinerary, reserved_checkpoint, next_stop_id, upper_stop_id)
+                        self._replace_path_elements(3, sub_path_checkps, sub_path_itinerary, ctx, reserved_checkpoint, next_stop_id, upper_stop_id)
                         # Handle waitpoints and their itinerary
-                        self._update_waitpoints(next_stop_id, sub_path_waitpoints, sub_path_wait_itinerary)
+                        self._update_waitpoints(next_stop_id, sub_path_waitpoints, sub_path_wait_itinerary, ctx)
                         reroute_status = True
         return reroute_status
 
-    def _replace_path_elements(self, num_elements_to_replace, sub_path_checkps, sub_path_itinerary, *checkpoints_to_remove):
+    def _replace_path_elements(self, num_elements_to_replace, sub_path_checkps, sub_path_itinerary, ctx, *checkpoints_to_remove):
         """Replaces the first few elements of checkpoints and itinerary with a new sub-path."""
         # replace the first three elements of the original path with the sub_path_replacement path
         # do these for checkpoints and checkp_itinerary
-        assert self.temp_fb_checkpoints[:num_elements_to_replace] == list(checkpoints_to_remove)
+        assert ctx.checkpoints[:num_elements_to_replace] == list(checkpoints_to_remove)
         # delete the first three elements from the temp_fb_checkpoints and from the checkpoint itinerary list as well
         # then add the new sub path to the checkpoint front
-        self.temp_fb_checkpoints = sub_path_checkps + self.temp_fb_checkpoints[num_elements_to_replace:]
-        self.temp_fb_checkp_itinerary = sub_path_itinerary + self.temp_fb_checkp_itinerary[num_elements_to_replace:]
+        ctx.checkpoints = sub_path_checkps + ctx.checkpoints[num_elements_to_replace:]
+        ctx.checkp_itinerary = sub_path_itinerary + ctx.checkp_itinerary[num_elements_to_replace:]
 
-    def _update_waitpoints(self, next_stop_id, sub_path_waitpoints, sub_path_wait_itinerary):
+    def _update_waitpoints(self, next_stop_id, sub_path_waitpoints, sub_path_wait_itinerary, ctx):
         """Updates the waitpoints and their itinerary based on the next stop."""
         # then do for waitpoints and waitp_itinerary
         # recall that there was no waitpoint associated with the reserved node. hence why we are here:
         # so, check if the first element of the waitpoint is for the next_stop_id. if it is we replace it.
         # with our new wait itinerary.
         # extract the number from 'next_stop_id' and extract the number of the first element of the waitpoint list.
-        temp_fb_wait_traffic = self.check_waitpoint_association(next_stop_id, self.temp_fb_waitpoints)
+        temp_fb_wait_traffic = self.check_waitpoint_association(next_stop_id, ctx.waitpoints)
         if temp_fb_wait_traffic:
-            self.temp_fb_waitpoints = sub_path_waitpoints + self.temp_fb_waitpoints[1:]
-            self.temp_fb_waitp_itinerary = sub_path_wait_itinerary + self.temp_fb_waitp_itinerary[1:]
+            ctx.waitpoints = sub_path_waitpoints + ctx.waitpoints[1:]
+            ctx.waitp_itinerary = sub_path_wait_itinerary + ctx.waitp_itinerary[1:]
         else:
             # if its not we just add/append the new waitpoint list to the front of the list.
-            self.temp_fb_waitpoints = sub_path_waitpoints + self.temp_fb_waitpoints
-            self.temp_fb_waitp_itinerary = sub_path_wait_itinerary + self.temp_fb_waitp_itinerary
+            ctx.waitpoints = sub_path_waitpoints + ctx.waitpoints
+            ctx.waitp_itinerary = sub_path_wait_itinerary + ctx.waitp_itinerary
 
     def _find_temporary_waitpoint(self, yielding_base_node, yielding_goal_node,
                                   other_base_node, other_horizon_path, traffic_control):
@@ -1964,17 +1936,20 @@ class FmTrafficHandler():
         4. Neither robot can be at a dock (both must be on a 'checkpoint').
         """
         def is_checkpoint(node_id):
-            print("DEBUG 0: ", node_id)
             node_desc = next((item['description'] for item in self.task_dictionary.get('itinerary', []) if item['loc_id'] == node_id), None)
             return node_desc == 'checkpoint'
 
-        if not is_checkpoint(yielding_base_node): # or not is_checkpoint(other_base_node):
-            print("DEBUG 1: YBN ", yielding_base_node, ", ICP ", other_base_node)
+        if not is_checkpoint(yielding_base_node): 
+            # log viz:
+            self.task_handler.visualization_handler.terminal_log_visualization(
+                f"YBN --> {yielding_base_node}.",
+                "FmTrafficHandler",
+                "_find_temporary_waitpoint",
+                "info")
             return None, None, None
 
         graph = self.task_handler.build_graph(self.task_dictionary)
         neighbors = graph.get(yielding_base_node, set())
-        print("DEBUG 2: neighbors ", neighbors)
 
         best_cy_id = None
         best_distance = float('inf')
@@ -1984,28 +1959,21 @@ class FmTrafficHandler():
         for cy in neighbors:
             cy_id = cy[0]
 
-            print("DEBUG 3: cy_id ", cy_id)
-
             if cy_id == yielding_base_node or cy_id == other_base_node or cy_id in traffic_control:
-                print("DEBUG 4 ")
                 continue
                 
             if not is_checkpoint(cy_id):
-                print("DEBUG 5 ")
                 continue
 
             if cy_id in other_horizon_path:
-                print("DEBUG 6 ")
                 continue
 
             distance = self.task_handler.fm_get_path_distance(cy_id, yielding_goal_node, graph)
             if distance is None:
-                print("DEBUG 7 ")
                 continue
 
             cy_itinerary = self.task_handler.fm_get_itinerary([cy_id], self.task_dictionary)
             if cy_itinerary and distance < best_distance:
-                print("DEBUG 8 ")
                 numeric_part = ''.join(filter(str.isdigit, cy_id))
                 spoofed_wy = f'W{numeric_part}'
 
@@ -2014,8 +1982,14 @@ class FmTrafficHandler():
                 best_cy_itinerary = cy_itinerary
                 best_spoofed_wy = spoofed_wy
 
+        # log viz:
+        self.task_handler.visualization_handler.terminal_log_visualization(
+            f"NEIGHBOR YIELD: Viable node for temporary wait, cy id --> {best_cy_id}.",
+            "FmTrafficHandler",
+            "_find_temporary_waitpoint",
+            "info")
+            
         if best_cy_id is not None:
-            print("DEBUG 9 ")
             return best_cy_id, best_spoofed_wy, best_cy_itinerary[0]
 
         return None, None, None
@@ -2026,7 +2000,7 @@ class FmTrafficHandler():
 
     def handle_priority_higher(self, r_id, next_stop_id, next_stop_coordinate,mex_r_id, mex_waitpoints, mex_wait_itinerary, mex_horizon,
                                mex_checkpoints, mex_agv_itinerary, mex_base, mex_agv_position, mex_speed_min, traffic_control, reserved_checkpoint,
-                               reserved_checkpoint_coordinate, from_source=True):
+                               reserved_checkpoint_coordinate, from_source=True, ctx=None):
         """
         Parameters
             r_id (str): The ID of the current robot.
@@ -2066,7 +2040,7 @@ class FmTrafficHandler():
                 # could be that this robot occupies a checkpoint without a waitpoint or a station dock.
                 temp_fb_wait_time, _ = self.handle_priority_lower(r_id, next_stop_id, next_stop_coordinate,mex_r_id, mex_waitpoints, mex_wait_itinerary, mex_horizon,
                                     mex_checkpoints, mex_agv_itinerary, mex_base, mex_agv_position, mex_speed_min, traffic_control, reserved_checkpoint,
-                                    reserved_checkpoint_coordinate, False)
+                                    reserved_checkpoint_coordinate, False, ctx=ctx)
             else:
                 self.task_handler.visualization_handler.terminal_log_visualization(
                     f"{mex_r_id} mex --> could not find waitpoint in graph. human help required.",
@@ -2081,9 +2055,9 @@ class FmTrafficHandler():
                 "FmTrafficHandler",
                 "handle_priority_higher",
                 "info")
-            mex_est_time = self.estimate_time_to_node(robot_pos = self.temp_fb_agv_position,
+            mex_est_time = self.estimate_time_to_node(robot_pos = ctx.agv_position,
                                                     node_pos = next_stop_coordinate,
-                                                    min_vel = float(self.temp_fb_speed_min))
+                                                    min_vel = float(ctx.speed_min))
             mex_wait_time = str(mex_est_time)
             # log viz:
             self.task_handler.visualization_handler.terminal_log_visualization(
@@ -2098,7 +2072,7 @@ class FmTrafficHandler():
 
     def handle_priority_lower(self, r_id, next_stop_id, next_stop_coordinate,mex_r_id, mex_waitpoints, mex_wait_itinerary, mex_horizon,
                                mex_checkpoints, mex_agv_itinerary, mex_base, mex_agv_position, mex_speed_min, traffic_control, reserved_checkpoint,
-                               reserved_checkpoint_coordinate, from_source=True):
+                               reserved_checkpoint_coordinate, from_source=True, ctx=None):
         """
         Parameters
             same as handle priority higher
@@ -2117,7 +2091,7 @@ class FmTrafficHandler():
             "info")
         temp_fb_wait_time = None
         mex_wait_time = None
-        temp_fb_wait_traffic = self.check_waitpoint_association(reserved_checkpoint, self.temp_fb_waitpoints)
+        temp_fb_wait_traffic = self.check_waitpoint_association(reserved_checkpoint, ctx.waitpoints)
 
         # log viz:
         self.task_handler.visualization_handler.terminal_log_visualization(
@@ -2138,7 +2112,7 @@ class FmTrafficHandler():
                 # could be that this robot occupies a checkpoint without a waitpoint or a station dock.
                 _, mex_wait_time = self.handle_priority_higher(r_id, next_stop_id, next_stop_coordinate,mex_r_id, mex_waitpoints, mex_wait_itinerary, mex_horizon,
                                     mex_checkpoints, mex_agv_itinerary, mex_base, mex_agv_position, mex_speed_min, traffic_control, reserved_checkpoint,
-                                    reserved_checkpoint_coordinate, False)
+                                    reserved_checkpoint_coordinate, False, ctx=ctx)
             else:
                 # log viz:
                 self.task_handler.visualization_handler.terminal_log_visualization(
@@ -2173,7 +2147,7 @@ class FmTrafficHandler():
                             mex_version, mex_manufacturer, mex_r_id, mex_agv_position, mex_speed_min,
                             mex_wait_time, mex_base, mex_horizon, mex_checkpoints, mex_agv_itinerary,
                             mex_waitpoints, mex_wait_itinerary, mex_landmarks, mex_dock_action_done,
-                            mex_active_map_name, mex_order_id, mex_header_id):
+                            mex_active_map_name, mex_order_id, mex_header_id, ctx=None):
         """
         Parameters
             r_id (str): The ID of the current robot.
@@ -2198,9 +2172,9 @@ class FmTrafficHandler():
                 "update_robot_status",
                 "info")
             # get new active map
-            temp_map_name = self.get_map(f_id, self.temp_fb_checkpoints[0], self.temp_fb_horizon[0])
+            temp_map_name = self.get_map(f_id, ctx.checkpoints[0], ctx.horizon[0])
             # ensure that map name is different from current map
-            if self.temp_fb_active_map_name != temp_map_name:
+            if ctx.active_map_name != temp_map_name:
                 # then we have a problem
                 self.task_handler.visualization_handler.terminal_log_visualization(
                     f"r_id: {r_id} is in an elevator but can not fetch new map.",
@@ -2208,9 +2182,9 @@ class FmTrafficHandler():
                     "update_robot_status",
                     "warn")
             # estimate goal nodes time of arrival
-            eta = self.estimate_time_to_node(robot_pos = self.temp_fb_agv_position,
-                node_pos = self.temp_fb_checkp_itinerary[self.temp_fb_checkpoints.index(self.temp_fb_horizon[0])],
-                min_vel = float(self.temp_fb_speed_min))
+            eta = self.estimate_time_to_node(robot_pos = ctx.agv_position,
+                node_pos = ctx.checkp_itinerary[ctx.checkpoints.index(ctx.horizon[0])],
+                min_vel = float(ctx.speed_min))
             if temp_fb_wait_time:
                 # here horizon is the target node that is currently occupied,
                 # since we would go to a wait point, wait some seconds at the waitpoint,
@@ -2221,21 +2195,21 @@ class FmTrafficHandler():
             temp_fb_node_eta = self.calculate_estimated_arrival_time(eta)
             # check if node actions exist
             self._handle_node_action(f_id, r_id, m_id, v_id,
-                                     self.temp_fb_header_id,
-                                     self.temp_fb_base,
-                                     self.temp_fb_dock_action_done,
-                                     self.temp_fb_landmarks)
+                                     ctx.header_id,
+                                     ctx.base,
+                                     ctx.dock_action_done,
+                                     ctx.landmarks)
             # publish a wait order update message.
-            header_id = self.temp_fb_header_id + 1
-            order_id, update_id = self.task_handler.generate_new_order_id(self.temp_fb_order_id)
+            header_id = ctx.header_id + 1
+            order_id, update_id = self.task_handler.generate_new_order_id(ctx.order_id)
             b_node, h_nodes, h_edges = self.task_handler.order_handler.create_order(
-                                                            self.temp_fb_checkpoints, # checkpoints
-                                                            self.temp_fb_waitpoints, # waitpoints,
-                                                            self.temp_fb_checkp_itinerary, # agv_itinerary,
-                                                            self.temp_fb_waitp_itinerary, # wait_itinerary,
-                                                            self.temp_fb_landmarks, # landmark)
+                                                            ctx.checkpoints, # checkpoints
+                                                            ctx.waitpoints, # waitpoints,
+                                                            ctx.checkp_itinerary, # agv_itinerary,
+                                                            ctx.waitp_itinerary, # wait_itinerary,
+                                                            ctx.landmarks, # landmark)
                                                             temp_map_name, # active map for which this nav will be performed
-                                                            self.temp_fb_horizon[0:], # release (next_stop_id)
+                                                            ctx.horizon[0:], # release (next_stop_id)
                                                             temp_fb_node_eta, # time of arrival at the newly released node
                                                             temp_fb_wait_time) # wait_time
             self.task_handler.order_handler.build_order_msg(f_id,

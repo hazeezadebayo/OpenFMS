@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 import psycopg2, psycopg2.extras
-import time, yaml, os, datetime, time, random, glob
+import time, yaml, os, datetime, time, random, glob, threading
 try:
     from twilio.rest import Client
 except ImportError:
@@ -35,11 +35,16 @@ class FmScheduleHandler():
         # initialize the task network dictionary
         self.task_dictionary = task_dict if task_dict else {}
 
-        self.iteration_count = 0
         self.send_sms = False
-        self.start_robot_id = None
-        self.iteration_interval = 40 # 300
         self.header_id = 0
+
+        # Time-based periodic interval trigger.
+        # _handle_iteration_interval fires once every _interval_seconds of wall-clock time,
+        # regardless of how many robots are being managed or what order they run in.
+        # This replaces the former robot-order-based sentinel (start_robot_id / iteration_count)
+        # which was not safe for concurrent ThreadPool execution.
+        self._last_interval_time = 0.0
+        self._interval_seconds = 40.0  # seconds between periodic fleet-wide checks
 
         # ----------------------
         # Idle Time Tracking
@@ -49,6 +54,10 @@ class FmScheduleHandler():
         # { robot_id: { "idle_time": total_idle_time_in_seconds,
         #               "start_time": timestamp_when_robot_became_idle or None } }
         self.idle_tracker = {}
+
+        # Lock protecting shared counters that may be mutated concurrently
+        # when manage_robot is called from a ThreadPoolExecutor.
+        self._sched_lock = threading.Lock()
 
 
     # ===================== idle Analytics =====================
@@ -70,21 +79,22 @@ class FmScheduleHandler():
         # Check if robot is idle (last_node_id is in home dock)
         is_idle = last_node_id in home_dock_loc_ids
 
-        if r_id not in self.idle_tracker:
-            self.idle_tracker[r_id] = {"idle_time": 0, "start_time": 0}
+        with self._sched_lock:
+            if r_id not in self.idle_tracker:
+                self.idle_tracker[r_id] = {"idle_time": 0, "start_time": 0}
 
-        if is_idle:
-            if self.idle_tracker[r_id]["start_time"] == 0:
-                # Start tracking idle time
-                self.idle_tracker[r_id]["start_time"] = current_time
+            if is_idle:
+                if self.idle_tracker[r_id]["start_time"] == 0:
+                    # Start tracking idle time
+                    self.idle_tracker[r_id]["start_time"] = current_time
+                else:
+                    # Accumulate idle time
+                    elapsed_time = current_time - self.idle_tracker[r_id]["start_time"]
+                    self.idle_tracker[r_id]["idle_time"] += elapsed_time
+                    self.idle_tracker[r_id]["start_time"] = current_time  # Reset start time for continuous tracking
             else:
-                # Accumulate idle time
-                elapsed_time = current_time - self.idle_tracker[r_id]["start_time"]
-                self.idle_tracker[r_id]["idle_time"] += elapsed_time
-                self.idle_tracker[r_id]["start_time"] = current_time  # Reset start time for continuous tracking
-        else:
-            # Robot is no longer idle
-            self.idle_tracker[r_id]["start_time"] = 0
+                # Robot is no longer idle
+                self.idle_tracker[r_id]["start_time"] = 0
 
 
     def compute_average_idle_time(self):
@@ -132,7 +142,9 @@ class FmScheduleHandler():
         if r_id is None:
             return
 
-        self.iteration_count += 1
+        with self._sched_lock:
+            now = time.time()
+            interval_elapsed = (now - self._last_interval_time) >= self._interval_seconds
 
         # ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
         # check if robot is task free
@@ -179,7 +191,9 @@ class FmScheduleHandler():
             records = self.traffic_handler.task_handler.visualization_handler.fetch_all_data(f_id)
             if records:
                 for map_ in records:
-                    self.header_id += 1
+                    with self._sched_lock:
+                        self.header_id += 1
+                        local_header_id = self.header_id
                     downloadmap_action_params = {
                         "mapId": map_["map_name"], # the identification is the map name.
                         "mapDownloadLink": map_["map_id"] # the map id here is the serial number on the database. so that the robot may fetch using name and s/n for download.
@@ -187,14 +201,14 @@ class FmScheduleHandler():
                     # get the robot to download the map of its location. untop which we would init the robot.
                     downloadmap_action = self.traffic_handler.task_handler.instant_actions_handler.create_action("downloadMap", downloadmap_action_params)
                     action_list = [downloadmap_action]
-                    self.traffic_handler.task_handler.instant_actions_handler.build_instant_action_msg(f_id, r_id, self.header_id, v_id, m_id, action_list)
+                    self.traffic_handler.task_handler.instant_actions_handler.build_instant_action_msg(f_id, r_id, local_header_id, v_id, m_id, action_list)
 
                 # register or init robot on the map.
                 self._handle_no_latest_order(f_id, r_id, last_node_id, home_dock_loc_ids, charge_dock_loc_ids)
 
 
         # manage current robot
-        traffic_control, unassigned_tasks = self.traffic_handler.manage_traffic(
+        traffic_control, unassigned_tasks, ctx = self.traffic_handler.manage_traffic(
             f_id=f_id, r_id=r_id, m_id=m_id, v_id=v_id)
 
         # ------------------------------------------------------------------
@@ -212,20 +226,20 @@ class FmScheduleHandler():
        
         vis_horizon = []
         vis_release = []
-        if self.traffic_handler.temp_fb_base:
-            vis_horizon.append(self.traffic_handler.temp_fb_base)
+        if getattr(ctx, 'base', None):
+            vis_horizon.append(getattr(ctx, 'base', None))
             # Both base and horizon are highlighted as active targets
             vis_release.append(False)
 
-        if self.traffic_handler.temp_fb_horizon and len(self.traffic_handler.temp_fb_horizon) > 0:
-            vis_horizon.append(self.traffic_handler.temp_fb_horizon[0])
+        if getattr(ctx, 'horizon', None) and len(getattr(ctx, 'horizon', None)) > 0:
+            vis_horizon.append(getattr(ctx, 'horizon', None)[0])
             # Always highlight the immediate target for better visibility
             vis_release.append(False)
 
         # Patch: also highlight released waitpoints
-        if self.traffic_handler.temp_fb_waitpoints:
-            for i, wp in enumerate(self.traffic_handler.temp_fb_waitpoints):
-                if i < len(self.traffic_handler.temp_fb_waitpoints_release) and self.traffic_handler.temp_fb_waitpoints_release[i]:
+        if getattr(ctx, 'waitpoints', None):
+            for i, wp in enumerate(getattr(ctx, 'waitpoints', None)):
+                if i < len(getattr(ctx, 'waitpoints_release', None)) and getattr(ctx, 'waitpoints_release', None)[i]:
                     if wp not in vis_horizon:
                         vis_horizon.append(wp)
                         vis_release.append(False)
@@ -240,15 +254,15 @@ class FmScheduleHandler():
             # nodes disappear immediately rather than lingering on screen.
             self.traffic_handler.task_handler.visualization_handler.active_horizons.pop(r_id, None)
 
-        if self.iteration_count >= self.iteration_interval:
+        if interval_elapsed:
             self._handle_iteration_interval(
                 f_id, r_id, m_id, v_id, cleared, bat_level, traffic_control, unassigned_tasks,
-                last_node_id, home_dock_loc_ids, charge_dock_loc_ids, station_dk_loc_ids)
+                last_node_id, home_dock_loc_ids, charge_dock_loc_ids, station_dk_loc_ids, ctx)
 
         # TODO!
         # monitor fleet wide error and send notification to users if necessary
         # check all fleets for any emergency to notify user.
-        # errors_ = self.traffic_handler.temp_fb_errors # fb_rec["errors"]
+        # errors_ = getattr(ctx, 'errors', None) # fb_rec["errors"]
         # self.check_notification_msgs(f_id, r_id, errors_)
 
 
@@ -292,15 +306,16 @@ class FmScheduleHandler():
 
     def _handle_iteration_interval(self, f_id, r_id, m_id, v_id, cleared,
                                    bat_level, traffic_control, unassigned_tasks,
-                                   last_node_id, home_dock_loc_ids, charge_dock_loc_ids, station_dk_loc_ids):
-        # Reset counter to avoid overflow
-        if self.start_robot_id == r_id:
-            self.start_robot_id = None
-            self.iteration_count = 0
-            return
-        # keep first robot temporarily so we know when to stop
-        if self.iteration_count == self.iteration_interval:
-            self.start_robot_id = r_id
+                                   last_node_id, home_dock_loc_ids, charge_dock_loc_ids, station_dk_loc_ids, ctx):
+        # Advance the last_interval_time so subsequent robots in the same cycle
+        # do not also trigger the interval. Under a ThreadPool, only the first
+        # robot to enter the interval branch runs the periodic logic.
+        with self._sched_lock:
+            now = time.time()
+            if (now - self._last_interval_time) < self._interval_seconds:
+                # Another robot in the same parallel cohort just reset the clock;  skip.
+                return
+            self._last_interval_time = now
 
         # this function belongs in traffic handler.
         # Verify robot's readiness for task assignment
@@ -388,21 +403,21 @@ class FmScheduleHandler():
                 # ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
                 # check if its loop and as such we must re-enter task
                 # ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-                if self._is_loop_task():
-                    self._reassign_loop_task(f_id, r_id, m_id, v_id, traffic_control, last_node_id, home_dock_loc_ids)
+                if self._is_loop_task(ctx):
+                    self._reassign_loop_task(f_id, r_id, m_id, v_id, traffic_control, last_node_id, home_dock_loc_ids, ctx)
 
 
-    def _is_loop_task(self):
+    def _is_loop_task(self, ctx):
         """ check if robot currently on a loop task. """
         # check if last node in checkpoints is last_node_id, then we can check if is a loop
         # if loop task no home targets by default only to and from. hence if 1 is left it must be a station id.
-        return (len(self.traffic_handler.temp_fb_horizon) == 1 and
-                self.traffic_handler.temp_fb_landmarks[2] == 'loop' and
-                self.traffic_handler.temp_fb_dock_action_done and
-                self.traffic_handler.temp_fb_agv_status == 'red')
+        return (len(getattr(ctx, 'horizon', None)) == 1 and
+                getattr(ctx, 'landmarks', None)[2] == 'loop' and
+                getattr(ctx, 'dock_action_done', None) and
+                getattr(ctx, 'agv_status', None) == 'red')
 
 
-    def _reassign_loop_task(self, f_id, r_id, m_id, v_id, traffic_control, last_node_id, home_dock_loc_ids):
+    def _reassign_loop_task(self, f_id, r_id, m_id, v_id, traffic_control, last_node_id, home_dock_loc_ids, ctx):
         """ manager will reassign loop task. """
         # place action is completed.
         _ = self.traffic_handler.task_handler.order_handler.cleanup_orders(
@@ -415,14 +430,14 @@ class FmScheduleHandler():
         task_cleared, available_rbts, _, _, _, _, _ = self.traffic_handler.task_handler.fm_send_task_request(
             f_id=f_id,
             r_id=r_id,  # Assign to the current robot instead
-            from_loc_id=self.traffic_handler.temp_fb_landmarks[3],
-            to_loc_id=self.traffic_handler.temp_fb_landmarks[4],
-            task_name=self.traffic_handler.temp_fb_landmarks[2],
-            task_priority=self.traffic_handler.temp_fb_landmarks[1],
+            from_loc_id=getattr(ctx, 'landmarks', None)[3],
+            to_loc_id=getattr(ctx, 'landmarks', None)[4],
+            task_name=getattr(ctx, 'landmarks', None)[2],
+            task_priority=getattr(ctx, 'landmarks', None)[1],
             task_dictionary=None,
             unassigned=False, # this is not an unassigned task
             override_cleared=False, # no dont override clear status
-            payload_kg=self.traffic_handler.temp_fb_landmarks[0]
+            payload_kg=getattr(ctx, 'landmarks', None)[0]
         )
         # if the task was not cleared, cool!
         # or if task was cleared but for an alternative robot. how will you know?
@@ -445,12 +460,14 @@ class FmScheduleHandler():
                     # "approx. time for stopcharge_action"
                     stopcharge_action_params = {"key": "duration",
                                                 "value": "2.0"}
-                    self.header_id += 1
+                    with self._sched_lock:
+                        self.header_id += 1
+                        local_header_id = self.header_id
                     stopcharge_action = self.traffic_handler.task_handler.instant_actions_handler.create_action(
                         "stopCharging", stopcharge_action_params)
                     action_list = [stopcharge_action]
                     self.traffic_handler.task_handler.instant_actions_handler.build_instant_action_msg(
-                        f_id, r_id, self.header_id, v_id, m_id, action_list)
+                        f_id, r_id, local_header_id, v_id, m_id, action_list)
                 # autocharge will handle the rest for when there is a free charge station.
                 # because if all charge station is occupied or robot stays at drop node, then robot blocks reserves node forever.
                 task_cleared = self._move_to_dock(f_id, r_id, node, 'move', last_node_id)
@@ -576,7 +593,7 @@ class FmScheduleHandler():
             
         if success:
             target_dock = None
-            landmarks = self.traffic_handler.temp_fb_landmarks
+            landmarks = None # `ctx` would be undefined here, taking previous task's landmarks was a bug
             if landmarks and len(landmarks) > 2 and landmarks[2] in ['transport', 'loop'] and len(landmarks) > 5:
                 # The home dock from which it originally started is at index 5
                 target_dock = landmarks[5]
@@ -666,10 +683,12 @@ class FmScheduleHandler():
 
             # request their respective factsheet so we can ascertain the f_id.
             factsheet_req_action = self.traffic_handler.task_handler.instant_actions_handler.create_action("factsheetRequest",{})
-            self.header_id += 1
+            with self._sched_lock:
+                self.header_id += 1
+                local_header_id = self.header_id
             action_list = [factsheet_req_action]
             self.traffic_handler.task_handler.instant_actions_handler.build_instant_action_msg(
-                None, serial_number, self.header_id, v_id, m_id, action_list = action_list)
+                None, serial_number, local_header_id, v_id, m_id, action_list = action_list)
 
 
     def fm_analytics(self, f_id, m_id, r_id=None, debug_level='info', write_to_file=False):
