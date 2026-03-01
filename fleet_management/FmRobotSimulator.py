@@ -18,22 +18,16 @@ import yaml
 ########################################################################
 # what TODO:
 # CODE:
-# -- High priority:
-# 1. Twilio! or just print to screen?
-# 2. Docker container for it - avoid it works on my computer!
-# 3. Robotsim should be more robust: reject tasks, check update ids etc.
-# 4. Mutex groups!? lock and unlock multiple nodes, if the nodes do not have associated waitpoints.
-
-# -- Low priority:
 # 1. Tailscale or husarion VPN or k8s for deployment and CI template
 # 2. include logic for time based task scheduling e.g daily, hourly etc.
 # 3. zone_id is not for fleet_id.  "resting" "forbidden" "restricted" "zone_vehicle_limit" etc. we need a better logic to hold fleet names.
 # 4. WebSocket: Used for ROS and HTML stuffs.
-# 5. cpp instead? better and faster at multi-threading
+# 5. ruby or cpp instead? better and faster at multi-threading
 # 6. re-assign tasks for a suspended or ignored robot. decommissioning and commissioning.
 # 7. user login!! authorization etc.
 # 8. include charge duration limits so robots can request removal themselves when time is up.
 # 9. BEVY_impulse entity component system.
+# 10. Twilio! or just print to screen?
 
 # TESTS:
 # reservation test: check for effects of handled actions, just send running like some times, send finished after time elapse. see if it knows to reserve next node.
@@ -78,7 +72,6 @@ import yaml
 # 20. use of self explanatory vda5050 compliant action triggers: cancelOrder, stopCharging, startCharging, pick, drop, and waitForTrigger.
 # 21. the robot is expected to have a navigation system or controller that can help move between nodes. algorithms like mpc, pure pursuit, carrot chase etc. ros2 integration is supported and tested.
 # 22. only one node leads to a station or home or charge node, no multiple entrance.
-#
 
 ########################################################################
 # What is offered:
@@ -120,15 +113,6 @@ import yaml
 # 14. ros2 open source support: nav2 as well as works out of the box with vda5050 connector adapter package by inorbit.
 
 ########################################################################
-# What to install:
-# pip install psycopg2-binary
-# pip install pyyaml
-# pip install twilio
-# pip install paho-mqtt
-# pip install -U 'jsonschema<4.0'
-
-
-
 # state message -- every 30sec
 # connction message -- every 15sec
 
@@ -160,6 +144,9 @@ class Robot():
         self.wait_start_time = None
         self.last_node_id = ""
         self.action_states = []
+        self.current_order_id = ""
+        self.current_order_update_id = -1
+        self.last_node_sequence_id = 0
 
         # Initialize last published timestamps (using time.time())
         self.last_state_publish = time.time()
@@ -175,9 +162,19 @@ class Robot():
         self.mqtt_client.on_connect = self.on_mqtt_connect
         self.mqtt_client.on_message = self.on_mqtt_message
 
-        # Use environment variables for MQTT broker and port
-        broker = os.getenv("MQTT_BROKER", "localhost")
-        port = int(os.getenv("MQTT_PORT", 1883))
+        # Extract MQTT broker details strictly from config.yaml as the single source of truth
+        config_yaml_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "config", "config.yaml")
+        broker = "localhost"
+        port = 1883
+        if os.path.exists(config_yaml_path):
+            with open(config_yaml_path, 'r', encoding="utf-8") as f:
+                try:
+                    config = yaml.safe_load(f)
+                    broker = str(config.get("mqtt", {}).get("broker_address", "localhost"))
+                    port = int(config.get("mqtt", {}).get("broker_port", 1883))
+                except Exception as e:
+                    print(f"Error reading config.yaml: {e}")
+
         self.mqtt_client.connect(broker, port, 60) # connect mqtt
 
         # Subscribe to topics
@@ -196,7 +193,7 @@ class Robot():
         # threading.Thread(target=self.dynamic_publish_loop, daemon=True).start()
 
         # Timers for publishing state and factsheet
-        self.create_timer(1.0, self.publish_msg)  # Publish every 1 second
+        self.create_timer(0.99, self.publish_msg)  # Publish every 1 second
 
         # Run MQTT client loop
         # self.mqtt_client.loop_start()
@@ -215,15 +212,39 @@ class Robot():
             if "order" in msg.topic:
                 # Check order is for this robot
                 if message.get("serialNumber") == self.robot_serial_number:
-                    self.order = message
-                    self.driving = True
-                    # Initialize target_node from the first node, if available
-                    if self.order.get("nodes"):
-                        self.target_node = self.order["nodes"][0] # first target node
-                        # Update active map from the order if available
-                        if self.target_node.get("nodePosition") and self.target_node["nodePosition"].get("mapId"):
-                            self.active_map = self.target_node["nodePosition"]["mapId"]
-                    print(f"Order received for {self.robot_serial_number}: {message}")
+                    # Monotonicity check: the robot must ignore any message where the orderUpdateId
+                    # is not strictly increasing compared to its current active order.
+                    # Exception: if orderId changes, reset the sequence (new UUID).
+                    new_order_id = message.get("orderId", "")
+                    new_update_id = message.get("orderUpdateId", 0)
+
+                    is_new_uuid = new_order_id != self.current_order_id
+                    is_newer_update = (new_order_id == self.current_order_id and new_update_id > self.current_order_update_id)
+
+                    if is_new_uuid or is_newer_update:
+                        self.current_order_id = new_order_id
+                        self.current_order_update_id = new_update_id
+                        self.order = message
+                        self.driving = True
+                        # Initialize target_node from the first node, if available
+                        if self.order.get("nodes"):
+                            # [FIX] VDA 5050: nodes[0] is the base node where the robot is currently at.
+                            # The first ACTUAL target for movement is nodes[1].
+                            if len(self.order["nodes"]) > 1:
+                                self.target_node = self.order["nodes"][1]
+                                self.last_node_id = self.order["nodes"][0]["nodeId"]
+                                self.last_node_sequence_id = self.order["nodes"][0]["sequenceId"]
+                            else:
+                                self.target_node = self.order["nodes"][0]
+                                # If only one node exists, we are already there.
+                            
+                            # Update active map from the target node if available
+                            if self.target_node.get("nodePosition") and self.target_node["nodePosition"].get("mapId"):
+                                self.active_map = self.target_node["nodePosition"]["mapId"]
+                        print(f"Order received for {self.robot_serial_number}: {message}")
+                    else:
+                        print(f"Robot {self.robot_serial_number} ignoring stale order: {new_order_id} update {new_update_id}. "
+                              f"Current: {self.current_order_id} update {self.current_order_update_id}")
 
             elif "instantActions" in msg.topic:
                 action_data =  json.loads(msg.payload)
@@ -238,14 +259,19 @@ class Robot():
                     parameters = action.get("actionParameters", [])
                     action_description = action.get("actionDescription",
                                                     f"Executing {action_type} with parameters {parameters}")
-                    # action_status = "RUNNING"  # Default status; you may dynamically set this based on state
 
-                    # Process based on blocking type
-                    if blocking_type in ["NONE", "SOFT"]:
+                    if action_type == "factsheetRequest":
+                        print(f"Received factsheetRequest. Publishing factsheet...")
+                        self.publish_factsheet()
+
+                    # Process based on blocking type.
+                    # HARD: robot must physically stop while action executes.
+                    # NONE/SOFT: action runs without pausing robot motion.
+                    if blocking_type == "HARD":
                         print(f"Executing HARD blocking action: {action_type}")
                         self.execute_action(action_id, action_type, parameters, action_description, blocking=True)
-                    elif blocking_type == "HARD":
-                        print(f"Executing SOFT blocking action: {action_type}")
+                    else:  # NONE or SOFT
+                        print(f"Executing non-blocking action: {action_type}")
                         self.execute_action(action_id, action_type, parameters, action_description, blocking=False)
 
         except json.JSONDecodeError:
@@ -282,6 +308,8 @@ class Robot():
                     "actionStatus": "FINISHED",
                     "resultDescription": f"Action {action_type} completed non-blocking."
                 })
+                # Immediately publish state so the Fleet Manager sees the FINISHED status
+                self.publish_state()
             # Simulate success
             # print(f"Action {action_type} executed successfully with parameters: {parameters}")
         except Exception as e:
@@ -311,15 +339,20 @@ class Robot():
                 self.action_states[-1]["actionStatus"] = "RUNNING"
                 self.action_states[-1]["resultDescription"] = f"Action {action_type} is in progress."
 
+                # Publish state with updated action states
+                self.publish_state()
+                time.sleep(0.5)  # Slight delay for smoother state updates
+
+
             elif elapsed_time >= duration:
                 # Transition to FINISHED state and break the loop
                 self.action_states[-1]["actionStatus"] = "FINISHED"
                 self.action_states[-1]["resultDescription"] = f"Action {action_type} completed successfully."
-                break
 
-            # Publish state with updated action states
-            self.publish_state()
-            time.sleep(0.5)  # Slight delay for smoother state updates
+                # Publish state with updated action states
+                self.publish_state()
+                time.sleep(0.5)  # Slight delay for smoother state updates
+                break
 
         # Simulate success
         self.instant_action = False
@@ -472,8 +505,8 @@ class Robot():
             "zoneSetId": self.fleetname,
             # if robot has a last successful node, then 'robot1_reserved_node'. and it automatically implies that, its released or reserved "true" state.
             # if robot has no last visited node, then ''.
-            "lastNodeId": self.last_node_id, # self.target_node["nodeId"] if self.target_node else "", # robot1_reserved_node,
-            "lastNodeSequenceId": 1,
+            "lastNodeId": self.last_node_id,
+            "lastNodeSequenceId": self.last_node_sequence_id,
             "driving": self.driving,
             "paused": not self.driving,
             "newBaseRequest": self.newbaserequest,
@@ -713,7 +746,6 @@ class Robot():
             return
 
         self.newbaserequest = False
-        self.last_node_id = self.target_node["nodeId"]
 
         target_x = self.target_node["nodePosition"]["x"]
         target_y = self.target_node["nodePosition"]["y"]
@@ -763,6 +795,10 @@ class Robot():
         if distance_to_target <= 0.05:
             self.position = [target_x, target_y, target_theta]
             print(f"Robot {self.robot_serial_number} reached target node {self.target_node['nodeId']}")
+            
+            # [FIX] Update last reached node tracking
+            self.last_node_id = self.target_node["nodeId"]
+            self.last_node_sequence_id = self.target_node.get("sequenceId", 1)
 
             # Remove the completed node and edge, if there are any left
             nodes = self.order.get("nodes", [])

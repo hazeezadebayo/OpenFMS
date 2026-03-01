@@ -1,6 +1,7 @@
 import json, os, logging, datetime, random, math, re, sys
 import yaml
 from jsonschema import validate, ValidationError
+
 from psycopg2 import sql
 import psycopg2, psycopg2.extras
 from pathlib import Path
@@ -83,9 +84,8 @@ class VisualizationSubscriber:
             # Custom formatter – no level & timestamp here (we'll add them manually when needed)
             class CustomConsoleFormatter(logging.Formatter):
                 def format(self, record):
-                    # We ignore record.asctime and record.levelname
-                    # → they will be added only when you use the colored wrapper
-                    return record.msg   # just pass the message through
+                    # Use the standard formatter to handle %s replacement etc.
+                    return super().format(record)
 
             console_handler.setFormatter(CustomConsoleFormatter())
 
@@ -597,12 +597,16 @@ class VisualizationSubscriber:
             'lime', 'teal', 'indigo', 'maroon', 'navy', 'darkgreen'
         ]
 
-        # Assign colors only to new robots
+        # Assign colors only to new robots — deterministically by robot ID so
+        # colors are stable across renders and across restarts.
         for robot in robot_positions:
             if robot not in self._robot_color_map:
+                # hash(str) is salted per-process in Python 3 — use a simple
+                # sum of char ordinals for cross-run stability.
+                idx = sum(ord(c) for c in str(robot)) % len(ansi_colors)
                 self._robot_color_map[robot] = {
-                    'ansi': random.choice(ansi_colors),
-                    'mpl': mpl_colors[len(self._robot_color_map) % len(mpl_colors)]
+                    'ansi': ansi_colors[idx],
+                    'mpl': mpl_colors[idx % len(mpl_colors)]
                 }
 
         # ────────────────────────────────────────────────
@@ -812,21 +816,11 @@ class VisualizationSubscriber:
         title = f" Fleet {self.fleetname} | Nodes: {len(node_positions)} | Robots: {len(robot_positions)} "
         dashboard_content.append(title.center(term_w))
         scale = f"Scale ≈ {grid_width}×{grid_height} | x:[{min_x:.1f}…{max_x:.1f}] y:[{min_y:.1f}…{max_y:.1f}]"
-        dashboard_content.append(scale.center(term_w))
-        dashboard_content.append("═" * term_w)
 
-        for row in grid:
-            dashboard_content.append(''.join(row).rstrip())
-
-        dashboard_content.append("═" * term_w)
-        # print("\n".join(dashboard_content))
-
-        # Write to the file in logs/ directory (robust, matching _get_logger logic)
-        logs_dir = os.path.join(os.getcwd(), "logs")
-        os.makedirs(logs_dir, exist_ok=True)
-        
         # --- Append Analytics Summary (if available) ---
         import glob
+        logs_dir = os.path.join(os.getcwd(), "logs")
+        os.makedirs(logs_dir, exist_ok=True)
         
         # Use absolute docker mapping first, fallback to relative logic
         search_path = "/app/logs/result_snapshot_*.txt"
@@ -892,8 +886,18 @@ class VisualizationSubscriber:
                 dashboard_content.append(f"Analytics Parsing Error: {e}".center(term_w))
                 for trace_line in err.split("\n"):
                     dashboard_content.append(trace_line)
+
         else:
-                dashboard_content.append(f"No snapshots: searched {search_path}".center(term_w))
+            dashboard_content.append(f"No snapshots: searched {search_path}".center(term_w))
+
+        # --- Graph and Grid ---
+        dashboard_content.append(scale.center(term_w))
+        dashboard_content.append("═" * term_w)
+
+        for row in grid:
+            dashboard_content.append(''.join(row).rstrip())
+
+        dashboard_content.append("═" * term_w)
 
         dashboard_content.append("--- END OF DASHBOARD RENDER ---")
         dashboard_path = os.path.join(logs_dir, "live_dashboard.txt")

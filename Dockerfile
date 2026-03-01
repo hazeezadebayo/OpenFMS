@@ -22,13 +22,8 @@ COPY . .
 # Set python path to allow imports from root and submodules
 ENV PYTHONPATH=/app:/app/submodules
 
-# --- PATCHING ---
-# 1. Fix Hardcoded 'localhost' in FmRobotSimulator.py
-RUN sed -i 's|self.mqtt_client.connect("localhost", 1883, 60)|self.mqtt_client.connect(os.environ.get("MQTT_BROKER", "mqtt"), int(os.environ.get("MQTT_PORT", 1883)), 60)|g' fleet_management/FmRobotSimulator.py
 
-# 2. Patch config.yaml for Docker networking (localhost -> db/mqtt)
-RUN sed -i 's|broker_address: "localhost"|broker_address: "mqtt"|g' config/config.yaml && \
-    sed -i 's|host: "localhost"|host: "db"|g' config/config.yaml
+
 
 # Default command
 CMD ["python3", "fleet_management/FmMain.py"]

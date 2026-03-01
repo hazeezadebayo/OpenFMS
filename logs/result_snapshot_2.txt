@@ -1,0 +1,10 @@
+number of total completed Orders: 0.
+number of total cancelled Orders: 0.
+number of charge Orders fullfilled: 0.
+number of currently active Orders: 3.
+number of currently unassigned Orders: 0.
+detected target collisions: 0.
+number of active robots: 0: total fleet waiting time [sec]: 0.00.
+avg per robot latency [sec]: {'R01': 0.5463941514492034, 'R02': 0.6821309996814262}.
+num robots: 2, overall avg [sec]: 0.61.
+avg per robot Idle Time [sec]: {'R02': 21.112746238708496, 'R01': 21.036787271499634}.

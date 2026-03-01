@@ -28,6 +28,8 @@ import skfuzzy as fuzz
 from skfuzzy import control as ctrl
 
 
+
+
 # ================================================================
 # 1. FUZZY DECISION SYSTEM
 # ================================================================
@@ -192,12 +194,12 @@ class FmTaskHandler:
 
     def create_fleet_tables(self):
         """ create_fleet_tables """
-        self.connection_handler = ConnectionSubscriber(self.fleetname, self.versions, self.db_conn, self.mqttclient, True)
-        self.factsheet_handler = FactsheetSubscriber(self.fleetname, self.versions, self.db_conn, self.mqttclient, True)
-        self.state_handler = StateSubscriber(self.fleetname, self.versions, self.db_conn, self.mqttclient, True)
+        self.connection_handler = ConnectionSubscriber(self.fleetname, self.versions, self.db_conn, self.mqttclient, False)
+        self.factsheet_handler = FactsheetSubscriber(self.fleetname, self.versions, self.db_conn, self.mqttclient, False)
+        self.state_handler = StateSubscriber(self.fleetname, self.versions, self.db_conn, self.mqttclient, False)
         self.visualization_handler = VisualizationSubscriber(self.fleetname, self.versions, self.db_conn, self.mqttclient, self.task_dictionary)
-        self.instant_actions_handler = InstantActionsPublisher(self.fleetname, self.versions, self.db_conn, self.mqttclient, True)
-        self.order_handler = OrderPublisher(self.fleetname, self.versions, self.db_conn, self.mqttclient, True)
+        self.instant_actions_handler = InstantActionsPublisher(self.fleetname, self.versions, self.db_conn, self.mqttclient, False)
+        self.order_handler = OrderPublisher(self.fleetname, self.versions, self.db_conn, self.mqttclient, False)
 
     # --------------------------------------------------------------------------------
 
@@ -519,6 +521,60 @@ class FmTaskHandler:
 
     # ----------------------------------------------------------------------------
 
+    def _get_robot_state_and_landmarks(self, f_id, r_id, m_id):
+        """
+        Fetch the robot's latest state message, parse it,
+        and identify related landmarks.
+
+        Returns:
+            order_id_ (str)
+            last_node_id (str)
+            node_states (list/dict)
+            current_position (list of floats [x, y, theta])
+            battery_charge (float)
+            loc_node_owner (str)
+            home_dock_loc_ids (list)
+            charge_dock_loc_ids (list)
+            station_dk_loc_ids (list)
+        """
+        # get robot last received state message
+        latest_state = self.state_handler.fetch_data(f_id, r_id, m_id)
+
+        # -----------------
+        # parse fetched data
+        # -----------------
+        _, _, order_id_, \
+            last_node_id, _, _, node_states, \
+                agv_position, _, battery_state, \
+                    _, _ = latest_state
+
+        battery_charge = battery_state['batteryCharge']
+        current_position = [
+            float(agv_position['x']),
+            float(agv_position['y']),
+            float(agv_position['theta'])
+        ]
+
+        # -----------------
+        # identify related landmarks
+        # -----------------
+        _, loc_node_owner, home_dock_loc_ids, charge_dock_loc_ids, station_dk_loc_ids = \
+            self.find_nearest_node(f_id, current_position)
+
+        return (
+            order_id_,
+            last_node_id,
+            node_states,
+            current_position,
+            battery_charge,
+            loc_node_owner,
+            home_dock_loc_ids,
+            charge_dock_loc_ids,
+            station_dk_loc_ids
+        )
+
+    # ----------------------------------------------------------------------------
+
     def verify_robot_fitness(self, f_id, r_id, m_id, task_name, payload_kg):
         """
         Functionality:
@@ -540,7 +596,13 @@ class FmTaskHandler:
         can_carry = True
         idle_time = 300.0
 
-        _, max_payload, _, _, _, _, _ = self.factsheet_handler.fetch_data(f_id, r_id, m_id)
+        # Read max_payload from factsheet cache (owned by factsheet_handler, populated by process_message).
+        # Falls back to DB only on cold start before robot publishes its factsheet.
+        fs = self.factsheet_handler.cache.get(r_id)
+        if fs:
+            max_payload = fs.get("typeSpecification", {}).get("maxLoadMass")
+        else:
+            _, max_payload, _, _, _, _, _ = self.factsheet_handler.fetch_data(f_id, r_id, m_id)
         try:
             # Attempt to convert payload_kg and max_payload to float
             if (task_name in ['transport', 'loop'] and (float(payload_kg) > float(max_payload))):
@@ -561,38 +623,31 @@ class FmTaskHandler:
             # Optionally, set a default behavior or re-raise the exception:
             can_carry = False
 
-        connection_state, _ = self.connection_handler.fetch_data(m_id, r_id)
-        # log viz:
-        self.visualization_handler.terminal_log_visualization(
-            f"{r_id}: connection state is {connection_state}.",
-            "FmTaskHandler",
-            "verify_robot_fitness",
-            "info")
+        # Read connection state from connection cache (owned by connection_handler, populated by process_message).
+        # Falls back to DB only on cold start before robot publishes its connection message.
+        conn_msg = self.connection_handler.cache.get(r_id)
+        if conn_msg:
+            connection_state = conn_msg.get("connectionState")
+        else:
+            connection_state, _ = self.connection_handler.fetch_data(m_id, r_id)
+        # # log viz:
+        # self.visualization_handler.terminal_log_visualization(
+        #     f"{r_id}: connection state is {connection_state}.",
+        #     "FmTaskHandler",
+        #     "verify_robot_fitness",
+        #     "info")
 
         if connection_state:
 
             if (connection_state == "ONLINE") and can_carry:
 
-                # get robot last received state message
-                latest_state = self.state_handler.fetch_data(f_id, r_id, m_id)
-
                 # -----------------
-                # parse fetched data
+                # state & landmark
                 # -----------------
-                _, _, order_id_, \
-                    last_node_id, _, _, node_states, \
-                        agv_position, _, battery_state, \
-                            _, _ = latest_state
-                battery_charge = battery_state['batteryCharge']
-                current_position = [float(agv_position['x']),
-                                    float(agv_position['y']),
-                                    float(agv_position['theta'])]
-
-                # -----------------
-                # identify related landmarks
-                # -----------------
-                _, loc_node_owner, home_dock_loc_ids, charge_dock_loc_ids, station_dk_loc_ids = \
-                    self.find_nearest_node(f_id, current_position)
+                (order_id_, last_node_id, node_states, current_position,
+                battery_charge, loc_node_owner, home_dock_loc_ids,
+                charge_dock_loc_ids, station_dk_loc_ids) = \
+                        self._get_robot_state_and_landmarks(f_id, r_id, m_id)
 
                 # -----------------
                 # check at_home = True or False --> in the robot state, is the last_node_id a home dock?
@@ -659,13 +714,13 @@ class FmTaskHandler:
                         if last_cancel_action:
                             if last_cancel_action['actionParameters'][0]['orderID'] == order_id_:
                                 cleared = True
-                        else:
-                            # log viz:
-                            self.visualization_handler.terminal_log_visualization(
-                                f"Robot {r_id}: previous task was not cancelled and robot is not at a home dock.",
-                                "FmTaskHandler",
-                                "verify_robot_fitness",
-                                "info")
+                        # else:
+                        #     # log viz:
+                        #     self.visualization_handler.terminal_log_visualization(
+                        #         f"Robot {r_id}: previous task was not cancelled and robot is not at a home dock.",
+                        #         "FmTaskHandler",
+                        #         "verify_robot_fitness",
+                        #         "info")
                 # or task in itself is a charge task.
                 else:
                     # and the elements in the current order or last recieved order is not more than 1 - >1 implies that there is
@@ -704,12 +759,12 @@ class FmTaskHandler:
             Updates the lists of home dock and charge dock locations based on job descriptions.
         """
 
-        # log viz:
-        self.visualization_handler.terminal_log_visualization(
-            f"robot position: {r_position[0]}, {r_position[1]}, {r_position[2]}.",
-            "FmTaskHandler",
-            "find_nearest_node",
-            "info")
+        # # log viz:
+        # self.visualization_handler.terminal_log_visualization(
+        #     f"robot position: {r_position[0]}, {r_position[1]}, {r_position[2]}.",
+        #     "FmTaskHandler",
+        #     "find_nearest_node",
+        #     "info")
 
         shortest_dist = float('inf')
         loc_node_ownr = None
@@ -740,12 +795,12 @@ class FmTaskHandler:
                     if d < shortest_dist:
                         shortest_dist = d
                         loc_node_ownr = loc_id
-                        # log viz:
-                        self.visualization_handler.terminal_log_visualization(
-                            f"Found shortest distance: {shortest_dist} with loc: {loc_node_ownr}.",
-                            "FmTaskHandler",
-                            "find_nearest_node",
-                            "info")
+                        # # log viz:
+                        # self.visualization_handler.terminal_log_visualization(
+                        #     f"Found shortest distance: {shortest_dist} with loc: {loc_node_ownr}.",
+                        #     "FmTaskHandler",
+                        #     "find_nearest_node",
+                        #     "info")
 
         return shortest_dist, loc_node_ownr, home_dk_loc_ids, charge_dk_loc_ids, station_dk_loc_ids
 
@@ -911,9 +966,17 @@ class FmTaskHandler:
 
         # optional return home (transport only)
         if task_name == 'transport' and home_dock_loc_ids:
-            primary = random.choice(home_dock_loc_ids)
+            # Prefer the dock the robot was at when the task was dispatched
+            # (loc_node_owner). This is almost always the robot's resident home
+            # dock. Only fall back to the first dock in the list if the robot
+            # was dispatched from a non-home node (e.g. mid-graph).
+            if loc_node_owner in home_dock_loc_ids:
+                primary = loc_node_owner
+            else:
+                primary = home_dock_loc_ids[0]
             others = [d for d in home_dock_loc_ids if d != primary]
             landmark.extend([primary] + others)
+
 
             home_path = self.fm_shortest_paths(to_loc_id, primary, graph)[0]
             if checkpoints and home_path and checkpoints[-1] == home_path[0]:

@@ -1,6 +1,7 @@
 services:
   mqtt:
     image: eclipse-mosquitto
+    pull_policy: if_not_present # never reach out to Docker Hub if image is already local
     ports:
       - "1883:1883"
       - "9001:9001"
@@ -10,6 +11,7 @@ services:
 
   db:
     image: postgres:13
+    pull_policy: if_not_present # never reach out to Docker Hub if image is already local
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: root
@@ -18,54 +20,63 @@ services:
       - "5432:5432"
     restart: unless-stopped
 
-  # manager:
-  #   build: .
-  #   depends_on:
-  #     - mqtt
-  #     - db
-  #   environment:
-  #     MQTT_BROKER: mqtt
-  #     MQTT_PORT: 1883
-  #     POSTGRES_HOST: db
-  #     PYTHONUNBUFFERED: 1
-  #   volumes:
-  #     - ./logs:/app/logs
-  #   stdin_open: true # docker run -i
-  #   tty: true # docker run -t
-  #   command: python3 fleet_management/FmMain.py
-
-  simulator:
+  manager:
     build: .
-    depends_on:
-      - mqtt
-      # - manager
-    environment:
-      MQTT_BROKER: mqtt
-      MQTT_PORT: 1883
-      POSTGRES_HOST: db
-      PYTHONUNBUFFERED: 1
-    command: python3 fleet_management/FmRobotSimulator.py
-
-  # Optional: Interface wrapper to run automated scenarios
-  scenario:
-    build: .
+    pull_policy: if_not_present # only pull base image during --build if not already cached
     depends_on:
       - mqtt
       - db
-      # - manager
     environment:
       MQTT_BROKER: mqtt
       MQTT_PORT: 1883
       POSTGRES_HOST: db
       PYTHONUNBUFFERED: 1
     volumes:
+      - ./config:/app/config
       - ./logs:/app/logs
-    # Wait for manager to be ready (rudimentary sleep in script or here)
-    entrypoint: [ "/bin/bash", "-c", "sleep 10 && python3 fleet_management/FmInterface.py" ]
+    stdin_open: true # docker run -i
+    tty: true # docker run -t
+    command: python3 fleet_management/FmMain.py
+
+  simulator:
+    build: .
+    pull_policy: if_not_present
+    depends_on:
+      - mqtt
+      - db
+    environment:
+      MQTT_BROKER: mqtt
+      MQTT_PORT: 1883
+      POSTGRES_HOST: db
+      PYTHONUNBUFFERED: 1
+    volumes:
+      - ./config:/app/config
+      - ./logs:/app/logs
+    command: python3 fleet_management/FmRobotSimulator.py
+
+  # Optional: Interface wrapper to run automated scenarios
+  scenario:
+    build: .
+    pull_policy: if_not_present
+    depends_on:
+      - mqtt
+      - db
+      - manager
+    environment:
+      MQTT_BROKER: mqtt
+      MQTT_PORT: 1883
+      POSTGRES_HOST: db
+      PYTHONUNBUFFERED: 1
+    volumes:
+      - ./config:/app/config
+      - ./logs:/app/logs
+    # Wait for manager to be ready and run scenario
+    command: /bin/bash -c "sleep 10 && python3 fleet_management/FmInterface.py run S1"
 
   # Optional: Dashboard viewer
   dashboard:
     build: .
+    pull_policy: if_not_present
     depends_on:
       - scenario
     environment:
@@ -74,4 +85,4 @@ services:
       - ./logs:/app/logs
     tty: true
     stdin_open: true
-    command: /bin/sh -c "while true; do clear; cat logs/live_dashboard.txt; sleep 0.1; done"
+    command: /bin/sh -c "while true; do clear; if [ -f logs/live_dashboard.txt ]; then cat logs/live_dashboard.txt; else echo 'Waiting for Fleet Manager to produce dashboard...'; fi; sleep 0.5; done"

@@ -9,6 +9,8 @@ from paho.mqtt.client import error_string
 from jsonschema import validate, ValidationError
 
 
+
+
 ########################################################################
 # get config file path:
 # Calculate project root (one level up from fleet_management/)
@@ -157,9 +159,11 @@ class FmMain():
                         self.fleetname != '':
                     # Load robot traffic manager display callback
                     with self.lock:  # Ensure no other operation interferes
-                        time.sleep(2.0)
+                        # time.sleep(2.0)
                         for r_id in self.serial_numbers:
                             self.schedule_handler.manage_robot(self.fleetname, r_id, self.manufacturer, self.version)
+                        # Issue terminal redraw once per cycle instead of per-robot
+                        self.schedule_handler.traffic_handler.task_handler.visualization_handler.terminal_graph_visualization()
         except KeyboardInterrupt:
             # log viz:
             self.schedule_handler.traffic_handler.task_handler.visualization_handler.terminal_log_visualization(
@@ -641,7 +645,7 @@ class FmMain():
     def fm_dispatch_task(self,
                         fleet_id='kullar',
                         robot_id=None,
-                        from_loc='A12',
+                        from_loc=None,
                         to_loc=None,
                         task_name='transport',
                         priority='low',
@@ -651,6 +655,15 @@ class FmMain():
             Call this from main to skip the interactive form filling.
             It sets up the necessary environment (maps, ids) and sends the request.
             """
+
+            # Guard: callers must always provide from_loc and to_loc explicitly.
+            # The old default 'A12' was a dev placeholder and caused spurious
+            # "not found in valid job_ids" warnings on every automated dispatch call.
+            if from_loc is None or to_loc is None:
+                raise ValueError(
+                    f"fm_dispatch_task: from_loc and to_loc are required. "
+                    f"Got from_loc={from_loc!r}, to_loc={to_loc!r}."
+                )
 
             # 1. Request Factsheets (Wait briefly for MQTT response to populate)
             self.schedule_handler.fm_send_factsheet_request(self.manufacturer, self.version)
@@ -689,8 +702,7 @@ class FmMain():
 
             # Validate Locations
             if (from_loc not in self.job_ids) or (to_loc not in self.job_ids) or (robot_id is None):
-                # print(f"Warning: Locations {from_loc} or {to_loc} not found in valid job_ids: {self.job_ids}")
-                # We continue, but the handler might reject it.
+                print(f"[FmMain] Warning: Locations {from_loc} or {to_loc} not found in valid job_ids: {self.job_ids}")
                 return
 
             # log viz:
@@ -722,8 +734,8 @@ class FmMain():
                 config = yaml.safe_load(file)
 
             # Extract sections and assign to respective variables
-            mqtt_broker_address = str(os.getenv('MQTT_BROKER', config['mqtt']['broker_address']))
-            mqtt_broker_port = str(os.getenv('MQTT_PORT', config['mqtt']['broker_port']))
+            mqtt_broker_address = str(config['mqtt']['broker_address'])
+            mqtt_broker_port = str(config['mqtt']['broker_port'])
             mqtt_keep_alive = str(config['mqtt']['keep_alive'])
 
             fleetname = str(config['fleet_info']['fleetname'])
@@ -731,11 +743,11 @@ class FmMain():
             fleet_versions = str(config['fleet_info']['versions'])
             fleet_manufacturer = str(config['fleet_info']['manufacturer'])
 
-            postgres_host = str(os.getenv('POSTGRES_HOST', config['postgres']['host']))
-            postgres_port = str(os.getenv('POSTGRES_PORT', config['postgres']['port']))
-            postgres_database = str(os.getenv('POSTGRES_DB', config['postgres']['database']))
-            postgres_user = str(os.getenv('POSTGRES_USER', config['postgres']['user']))
-            postgres_password = str(os.getenv('POSTGRES_PASSWORD', config['postgres']['password']))
+            postgres_host = str(config['postgres']['host'])
+            postgres_port = str(config['postgres']['port'])
+            postgres_database = str(config['postgres']['database'])
+            postgres_user = str(config['postgres']['user'])
+            postgres_password = str(config['postgres']['password'])
 
             task_dict = {"itinerary": config["itinerary"],
                                "graph": config["graph"]}
@@ -854,6 +866,9 @@ class FmMain():
                 self.schedule_handler.traffic_handler.task_handler.factsheet_handler.process_message(message)
             elif "state" in msg.topic:
                 self.schedule_handler.traffic_handler.task_handler.state_handler.process_message(message)
+                r_id = message.get("serialNumber")
+                if r_id:
+                    self.schedule_handler.traffic_handler.online_robots.add(r_id)
         except json.JSONDecodeError as e:
             # log viz:
             self.schedule_handler.traffic_handler.task_handler.visualization_handler.terminal_log_visualization(

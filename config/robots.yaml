@@ -5,10 +5,10 @@
   manufacturer: birfen
   connection_state: ONLINE
   initial_position:
-  - 18.0
-  - 12.0
+  - 6.0
+  - -6.0
   - 0.0
-  bat_charge: 78.8
+  bat_charge: 66.4
   lin_velocity: 0.65
   ang_velocity: 0.15
 - fleetname: kullar
@@ -18,22 +18,9 @@
   manufacturer: birfen
   connection_state: ONLINE
   initial_position:
-  - 30.0
-  - 12.0
   - 0.0
-  bat_charge: 71.3
-  lin_velocity: 0.65
-  ang_velocity: 0.15
-- fleetname: kullar
-  robot_serial_number: R03
-  versions: v2
-  version: 2.0.0
-  manufacturer: birfen
-  connection_state: ONLINE
-  initial_position:
-  - 24.0
-  - 12.0
   - 0.0
-  bat_charge: 87.0
+  - 0.0
+  bat_charge: 85.5
   lin_velocity: 0.65
   ang_velocity: 0.15

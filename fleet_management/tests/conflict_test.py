@@ -268,24 +268,24 @@ def test_s1():
     
     print_state({
         'R01': 'base=C2, order -> checkpoints=[C2, C10, C11, C3] (Released up to C2)',
-        'R02': 'base=C9, order -> checkpoints=[C9, C10, C2] (Released up to C9)'
+        'R02': 'base=C9, order -> checkpoints=[C9, C10, C12] (Released up to C9)'
     }, "[] (Initially free)")
 
     # Simulate R01 getting its route first
     env.set_db(
         [mock_state_rec('R01', base='C2'), mock_state_rec('R02', base='C9')],
         [mock_order_rec('R01', 'order01', checkpoints=['C2','C10','C11','C3'], target_base_idx=0, landmark=[0.0, 'high', 'transport', 'C2', 'C3']),
-         mock_order_rec('R02', 'order02', checkpoints=['C9','C10','C2'], target_base_idx=0, landmark=[0.0, 'low', 'transport', 'C9', 'C2'])]
+         mock_order_rec('R02', 'order02', checkpoints=['C9','C10','C12','C2'], target_base_idx=0, landmark=[0.0, 'low', 'transport', 'C9', 'C12'])]
     )
     env.run_robot('R01') # R01 successfully reserves C10
 
     # R01 now holds C10
     print(f"\n{CYAN}--- R01 is now en route, holding traffic reservation on C10 ---{RESET}")
-    # To simulate R01 having secured C10, we advance its order release index (target_base_idx=1 -> C10 released)
+    # To simulate R01 having secured and moved to C10, we advance its base to C10 and release up to index 1
     env.set_db(
-        [mock_state_rec('R01', base='C2'), mock_state_rec('R02', base='C9')],
-        [mock_order_rec('R01', 'order01', checkpoints=['C2','C10','C11','C3'], target_base_idx=1, landmark=[0.0, 'high', 'transport', 'C2', 'C3']),
-         mock_order_rec('R02', 'order02', checkpoints=['C9','C10','C2'], target_base_idx=0, landmark=[0.0, 'low', 'transport', 'C9', 'C2'])]
+        [mock_state_rec('R01', base='C10'), mock_state_rec('R02', base='C9')],
+        [mock_order_rec('R01', 'order01', checkpoints=['C10','C11','C3'], target_base_idx=0, landmark=[0.0, 'high', 'transport', 'C2', 'C3']),
+         mock_order_rec('R02', 'order02', checkpoints=['C9','C10','C12','C2'], target_base_idx=0, landmark=[0.0, 'low', 'transport', 'C9', 'C12'])]
     )
     env.run_robot('R02') # R02 should see C10 is occupied and wait.
 
