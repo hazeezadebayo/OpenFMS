@@ -128,43 +128,91 @@ DB is only hit during the very first cycle before robots have published their fi
 
 ### Can OpenFMS control 1,000 robots in real-time today?
 
-**Not yet, but significantly closer.** Recent updates have eliminated O(N²) collision scans, decoupled thread-blocking shared state (`temp_fb_*`), and optimized visual logging. However, the architecture is still fundamentally bottlenecked by Python's single threaded loop constraints and synchronous database I/O. 
-
-| Metric | 2 robots (current) | 100 robots | 1000 robots (target) |
-|---|---|---|---|
-| Cycle time | < 1s | ~3-5s | ~30s+ |
-| DB queries/s | ~4 | ~200 | ~2,000 |
-| Decision latency | < 1s | ~3-5s | >20 seconds |
-| Practical usable? | ✅ Yes | ✅ Yes | ❌ No |
-
-### What's needed for 1,000 robots
-
-| Requirement | Current State | Required Change |
-|---|---|---|
-| Parallel robot processing | Sequential, 1 thread | Thread pool (32–64 workers) with `RobotContext` (Ready)* |
-| State management | In-memory cache ✅ | Done |
-| Order management | DB query per cycle ❌ | In-memory order cache |
-| Conflict detection | O(1) mathematical Set operations ✅ | Done |
-| MQTT throughput | Single broker, 1 connection | MQTT cluster or multiple brokers per zone |
-| DB layer | Single Postgres instance | Connection pool (PgBouncer), read replicas for analytics |
-| Traffic handler thread safety | 100% thread-safe (stateless via `RobotContext`) ✅ | Done |
-| Visualization | Exactly once per master cycle ✅ | Done |
-| GIL limitation | Python GIL limits true parallelism | Use multiprocessing or asyncio for DB-bound work |
-
-*(Note: While `FmTrafficHandler` was successfully decoupled via `RobotContext` enabling parallelism safely, `manage_robot()` is still strictly called sequentially inside `FmMain`'s main loop. To fully realize this upgrade, `FmMain` simply needs a ThreadPool executor wrapped around its robot iterator.)
-
-### Realistic scalability ceiling per architecture tier
-
-| Architecture | Robot Ceiling | Latency |
-|---|---|---|
-| **Current** (sequential + O(1) + single-log) | ~100-200 robots | 0.5–2s |
-| After full ThreadPool implementation in `FmMain` | ~300+ robots | < 1s |
-| After all fixes + asyncio + PgBouncer | ~500 robots | 200–500ms |
-| Distributed (zone-partitioned FMs + message bus) | 1000+ robots | <150ms |
-
-For 1,000 robots, a **zone-partitioned deployment** is the correct architecture: multiple FM instances each managing a physical zone (e.g., floor, aisle), coordinating via a shared message bus (MQTT or Redis Streams) for cross-zone handoffs.
+**No — and it will not reach 1,000 without deeper architectural changes.** The current architecture can handle ~80–120 robots acceptably. Beyond that, two structural issues compound quadratically. Here is the honest analysis grounded in the actual code.
 
 ---
+
+### Per-Cycle Cost Breakdown (per robot, steady state)
+
+Every call to `manage_robot(r_id)` does the following work:
+
+| Step | Code Location | Cost per Robot | Scales With N? |
+|---|---|---|---|
+| `verify_robot_fitness` | `FmTaskHandler` → state/factsheet/connection/order cache | O(1) — all cache hits | No |
+| `instant_actions.fetch_data()` | `instant_actions.py:207` — **RAW DB QUERY, no cache** | ~10–30ms (network round-trip) | No, but constant each robot |
+| `order_handler.fetch_data()` | `order.py:820` — cache hit | O(1) | No |
+| `fetch_mex_data()` → state loop | `FmTrafficHandler.py:1155` — iterates ALL N robots in `raw_cache` | O(N) per call | **Yes — O(N) × N calls = O(N²)** |
+| `fetch_mex_data()` → order loop | `FmTrafficHandler.py:1121` — iterates ALL N `order_recs` | O(N) per call | **Yes — O(N²) total** |
+| `_handle_robot_traffic_status` | Pure Python path computation | O(1) | No |
+| `insert_order_db` + MQTT publish | Order write + publish (only when order changes, ~10–15% of cycles) | 10–30ms (DB) + 1–5ms (MQTT) | No |
+
+**The two dominant bottlenecks are:**
+1. **`instant_actions.fetch_data()` is uncached** — it issues `SELECT * FROM instant_actions WHERE serial_number = %s ORDER BY timestamp DESC` every cycle per robot. At N=100 that is 100 synchronous DB queries per cycle.
+2. **`fetch_mex_data()` is O(N) per call, called N times per cycle** — it iterates the entire state cache and entire order cache to build the fleet-wide traffic picture. This is inherently O(N²) per cycle, the dominant asymptotic cost.
+
+---
+
+### Quantitative Cycle Time Estimates
+
+Model: `T_cycle ≈ N × (T_instant_actions + T_fetch_mex)` where:
+- `T_instant_actions ≈ 15ms` (fixed DB round-trip, no cache)
+- `T_fetch_mex ≈ 0.02 × N ms` (Python dict iteration over all N entries × 2 passes)
+
+| Metric | 2 robots | 100 robots | 1,000 robots (target) |
+|---|---|---|---|
+| Cycle time (est.) | \<0.1s | ~1.6s | ~240s |
+| `instant_actions` DB queries/cycle | 2 | 100 | 1,000 |
+| `fetch_mex_data` iterations/cycle | ~4 | ~20,000 | ~2,000,000 |
+| Decision latency (event→order) | \<0.5s | ~2s | ~240s |
+| Practical usable? | ✅ Yes | ⚠️ Borderline | ❌ No |
+
+> **Note on 100 robots:** "Borderline" means the ~1.6s cycle is acceptable for low-speed warehouse robots (≤1m/s) but marginal for faster AGVs. For purely patrol/loop tasks with predictable paths, 100 robots is the realistic usable ceiling today.
+
+---
+
+### What's Needed — Accurate Current Status
+
+| Requirement | Current State | Remaining Fix |
+|---|---|---|
+| Parallel robot processing | Sequential loop — `manage_robot()` called serially | Blocked by `FmTrafficHandler` shared state (`last_traffic_dict`, `collision_tracker`, `temp_robot_delay_time`) not yet in `RobotContext` |
+| `fetch_mex_data` O(N²) | **Persists** — called N times, each pass O(N) | Precompute fleet snapshot once per cycle, pass to all `manage_traffic` calls |
+| `instant_actions` cache | **Missing** — raw DB query per robot per cycle | Add `self.cache` dict in `InstantActionsPublisher`, same pattern as `order.py` |
+| State management | In-memory MQTT cache ✅ | Done |
+| Order management | In-memory cache ✅ (`fetch_data`, `fetch_all_data`) | Done |
+| Conflict detection | O(1) set ✅ | Done |
+| Visualization (once/cycle) | ✅ | Done |
+| DB connection layer | `ThreadedConnectionPool` + `ThreadSafeConnectionProxy` ✅ | Done — awaiting ThreadPool activation |
+| Interval logic (order-independent) | Time-based `_last_interval_time` ✅ | Done — awaiting ThreadPool activation |
+| MQTT throughput | Single broker, synchronous publish | Batch MQTT publishes or async publish for large fleets |
+| GIL | Python GIL + sequential loop | Multiprocessing (zone-FM partitioning) is the only true fix for 1,000+ |
+
+---
+
+### Realistic Scalability Ceiling Per Architecture Tier
+
+| Architecture | Robot Ceiling | Cycle Latency | Key Unlocking Step |
+|---|---|---|---|
+| **Current** (sequential, O(N²) fetch_mex_data, uncached instant_actions) | ~80–120 robots | 0.5–2s | — |
+| + Cache `instant_actions` + precompute fleet snapshot once/cycle | ~200–250 robots | 0.5–1.5s | Fix the two bottlenecks above |
+| + Full ThreadPool (complete B3 extension, move remaining FmTrafficHandler state to RobotContext) | ~300–400 robots | 0.2–0.8s | Finish thread-safety inside FmTrafficHandler |
+| + asyncio MQTT publish + PgBouncer | ~500 robots | 100–300ms | Infrastructure layer |
+| Zone-partitioned deployment (multiple FM instances + shared message bus) | 1,000+ robots | \<150ms | Architectural split — each FM manages 100–200 robots |
+
+---
+
+### Path to 1,000 Robots
+
+The two highest-leverage code changes, ordered by effort vs. impact:
+
+**1. Cache `instant_actions.fetch_data()`** — 30 lines of code, eliminates N synchronous DB queries per cycle. Estimated improvement: **30–40% cycle time reduction at N=100**.
+
+**2. Precompute fleet snapshot once per cycle in `FmMain`** — call `fetch_mex_data()` once before the robot loop and pass the result into each `manage_traffic` call. Converts O(N²) → O(N). Estimated improvement: **dominant at N≥200, makes 500 robots feasible**.
+
+**3. Complete the RobotContext extension** — move `last_traffic_dict`, `temp_robot_delay_time`, `collision_tracker`, `robots_in_collision` from `FmTrafficHandler` instance state into `RobotContext`. This unblocks the already-instrumented ThreadPool in `FmMain`. Estimated improvement: **300–400 robot practical ceiling after ThreadPool activation**.
+
+**4. Zone-partitioned FM instances** — for 1,000+ robots, a single Python process cannot scale past ~500 robots regardless of optimizations. The only architectural path to 1,000 robots is running multiple FM processes, each owning a physical zone (~150–200 robots), coordinating via a shared MQTT broker or Redis Streams for cross-zone handoff. This is a deployment decision, not a code change.
+
+
 
 ## 4. Redundancy Analysis
 
