@@ -148,7 +148,6 @@ class FmMain():
         self.timer_interval = 35.0
 
         # initialization for thread
-        self.on_timer_lock = False
         self.timer_thread = None
         self.timer_thread_running = threading.Event()
         self.lock = threading.Lock()  # Lock to ensure one process finishes before another starts
@@ -161,7 +160,6 @@ class FmMain():
         else:
             # if API call, then start main loop in its own thread
             self.start_main_loop_thread()
-
 
     # Define the function to start the main loop thread
     def start_main_loop_thread(self):
@@ -208,20 +206,22 @@ class FmMain():
     def main_loop(self):
         """ Main loop runs wether accessed from terminal or api to manage the robot and fleet operations. """
         try:
+            
             i = 0
             while True:
                 i += 1
+                # print("f:", self.fleetnames, "-", self.fleetname, " r:", self.serial_numbers)
                 # Perform operations every x iterations if fleet and robot IDs are available
                 if i % self.timer_interval == 0 and self.fleetnames and \
-                    self.serial_numbers and self.on_timer_lock is False and \
-                        self.fleetname != '':
+                    self.serial_numbers and self.fleetname != '':
                     # Load robot traffic manager display callback
-                    with self.lock:  # Ensure no other operation interferes
+                    with self.lock:  # Ensure no other operation interferes     
+                        time.sleep(2.0) 
                         for r_id in self.serial_numbers:
                             self.schedule_handler.manage_robot(self.fleetname, r_id, self.manufacturer, self.version)
 
                         # Issue terminal traffic control summary once per cycle instead of per-robot
-                        traffic_dict = getattr(self.schedule_handler.traffic_handler, 'last_traffic_dict', None)
+                        traffic_dict = getattr(self.schedule_handler.traffic_handler, 'traffic_control_dict', None)
                         if traffic_dict:
                             colored_traffic = ", ".join([f"\033[96m{r}\033[0m: \033[93m{n}\033[0m" for r, n in traffic_dict.items()]) if isinstance(traffic_dict, dict) else traffic_dict
                             self.schedule_handler.traffic_handler.task_handler.visualization_handler.terminal_log_visualization(
@@ -377,33 +377,33 @@ class FmMain():
                 self.serial_numbers)
 
             # Define the valid options
-            valid_loc_id_pattern = re.compile(r'^[A-Z][1-9]\d*|^[A-Z]10\d*$')
+            valid_loc_id_pattern = re.compile(r'^[CW]\d+$')
 
             # Ask for and validate from_loc_id
             # from_loc_id = "A3" # example
-            from_loc_id = input('Please enter from_loc_id [options must conform to the pattern AnyAlphabet+<number>]: \n')
+            from_loc_id = input('Please enter from_loc_id [options must conform to the pattern C<number> or W<number>]: \n')
             while not valid_loc_id_pattern.match(from_loc_id) or from_loc_id not in self.job_ids:
                 # log viz:
                 self.schedule_handler.traffic_handler.task_handler.visualization_handler.terminal_log_visualization(
-                    f'Invalid input. It does not conform to the AnyAlphabet+<number> pattern or not in {self.job_ids}',
+                    f'Invalid input. It does not conform to the C<number> or W<number> pattern or not in {self.job_ids}',
                     "FmMain",
                     "interactive_robot_fleet_startup",
                     "critical")
-                from_loc_id = input('Please enter from_loc_id [options must conform to the pattern AnyAlphabet+<number>] or exit: ')
+                from_loc_id = input('Please enter from_loc_id [options must conform to the pattern C<number> or W<number>] or exit: ')
                 if from_loc_id == 'exit':
                     return
 
             # Ask for and validate to_loc_id
             # to_loc_id = "A5" # example
-            to_loc_id = input('Please enter to_loc_id [options must conform to the pattern AnyAlphabet+<number>]: \n')
+            to_loc_id = input('Please enter to_loc_id [options must conform to the pattern C<number> or W<number>]: \n')
             while not valid_loc_id_pattern.match(to_loc_id) or to_loc_id not in self.job_ids:
                 # log viz:
                 self.schedule_handler.traffic_handler.task_handler.visualization_handler.terminal_log_visualization(
-                    f'Invalid input. It does not conform to the AnyAlphabet+<number> pattern or not in {self.job_ids}',
+                    f'Invalid input. It does not conform to the C<number> or W<number> pattern or not in {self.job_ids}',
                     "FmMain",
                     "interactive_robot_fleet_startup",
                     "critical")
-                to_loc_id = input('Please enter to_loc_id [options must conform to the pattern AnyAlphabet+<number>] or exit: ')
+                to_loc_id = input('Please enter to_loc_id [options must conform to the pattern C<number> or W<number>] or exit: ')
                 if to_loc_id == 'exit':
                     return
 
@@ -594,33 +594,33 @@ class FmMain():
                     return
 
             # Define the valid options
-            valid_loc_id_pattern = re.compile(r'^[A-Z][1-9]\d*|^[A-Z]10\d*$')
+            valid_loc_id_pattern = re.compile(r'^[CW]\d+$')
             # Ask for and validate from_loc_id
-            input_loc_id = input('Please enter valid location/landmark id [options must conform to the pattern AnyAlphabet+<number>]: ')
+            input_loc_id = input('Please enter valid location/landmark id [options must conform to the pattern C<number> or W<number>]: ')
             while not valid_loc_id_pattern.match(input_loc_id):
                 # log viz:
                 self.schedule_handler.traffic_handler.task_handler.visualization_handler.terminal_log_visualization(
-                    'Invalid input. It does not conform to the AnyAlphabet+<number> pattern.',
+                    'Invalid input. It does not conform to the C<number> or W<number> pattern.',
                     "FmMain",
                     "interactive_robot_fleet_startup",
                     "critical")
-                input_loc_id = input('Please enter input_loc_id [options must conform to the pattern AnyAlphabet+<number>] or exit: ')
+                input_loc_id = input('Please enter input_loc_id [options must conform to the pattern C<number> or W<number>] or exit: ')
                 if input_loc_id == 'exit':
                     return
 
             # Define the valid pattern
-            valid_neihbour_id_pattern = re.compile(r'^A-Z(,A-Z)*$')
+            valid_neihbour_id_pattern = re.compile(r'^[CW]\d+(,[CW]\d+)*$')
 
-            # Ask for and validate neighbor_loc_ids sample input_str = "A4,A2,A3,A6"
-            neighbor_loc_ids = input('Neighbors cannot be left empty. Please enter valid connected location/landmark id [options must conform to the pattern AnyAlphabet+<number>]: ')
+            # Ask for and validate neighbor_loc_ids sample input_str = "C4,W2,C3,W6"
+            neighbor_loc_ids = input('Neighbors cannot be left empty. Please enter valid connected location/landmark ids [options must conform to the pattern C<number> or W<number>, comma separated]: ')
             while not valid_neihbour_id_pattern.match(neighbor_loc_ids.replace(" ","")):
                 # log viz:
                 self.schedule_handler.traffic_handler.task_handler.visualization_handler.terminal_log_visualization(
-                    'Invalid input. It does not conform to the AnyAlphabet+<number> pattern.',
+                    'Invalid input. It does not conform to the C<number> or W<number> comma-separated pattern.',
                     "FmMain",
                     "interactive_robot_fleet_startup",
                     "critical")
-                neighbor_loc_ids = input('Please enter neighbor_loc_ids [options must conform to the pattern AnyAlphabet+<number>] or exit: ')
+                neighbor_loc_ids = input('Please enter neighbor_loc_ids [options must conform to the pattern C<number> or W<number>, comma separated] or exit: ')
                 if neighbor_loc_ids == 'exit':
                     return
 
@@ -651,17 +651,17 @@ class FmMain():
 
         elif chosen_option == 'fm_delete_landmark_request':
             # Define the valid pattern
-            valid_pattern = re.compile(r'^[A-Z][1-9]\d*|^[A-Z]10\d*$')
+            valid_pattern = re.compile(r'^[CW]\d+$')
             # Ask for and validate the input
-            loc_id = input('Please enter a string of the form AnyAlphabet<number>: ')
+            loc_id = input('Please enter a string of the form C<number> or W<number>: ')
             while not valid_pattern.match(loc_id):
                 # log viz:
                 self.schedule_handler.traffic_handler.task_handler.visualization_handler.terminal_log_visualization(
-                    'Invalid input. It does not conform to the AnyAlphabet+<number> pattern.',
+                    'Invalid input. It does not conform to the C<number> or W<number> pattern.',
                     "FmMain",
                     "extract_yaml_info",
                     "critical")
-                loc_id = input('Please enter a string of the form AnyAlphabet<number> or exit: ')
+                loc_id = input('Please enter a string of the form C<number> or W<number> or exit: ')
                 if loc_id == 'exit':
                     return
 

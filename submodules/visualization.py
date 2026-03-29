@@ -845,38 +845,49 @@ class VisualizationSubscriber:
                     lines = [l.strip() for l in rf.readlines() if l.strip()]
                 
                 # Grouping metrics:
+                core_metrics = []
                 sys_metrics = []
-                robot_metrics = []
                 
                 for line in lines:
                     # strip ansi sequences if they slipped into the log file
                     clean_line = re.sub(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])', '', line)
                     
-                    if "number of total completed Orders" in clean_line: sys_metrics.append(clean_line.replace("number of total ", ""))
-                    if "number of currently active Orders" in clean_line: sys_metrics.append(clean_line.replace("number of currently ", ""))
-                    if "number of currently unassigned Orders" in clean_line: sys_metrics.append(clean_line.replace("number of currently ", ""))
-                    if "overall avg [sec]" in clean_line: sys_metrics.append(clean_line.replace("num robots", "Robots"))
-                    if "detected target collisions" in clean_line: sys_metrics.append(clean_line.replace("detected target collisions:", "Conflicts:"))
-                    if "Average Execution Duration" in clean_line: robot_metrics.append(clean_line.replace("Average Execution Duration:", "Avg Exec:"))
+                    if "number of total completed Orders" in clean_line: core_metrics.append(clean_line.replace("number of total ", ""))
+                    if "number of currently active Orders" in clean_line: core_metrics.append(clean_line.replace("number of currently ", ""))
+                    if "number of currently unassigned Orders" in clean_line: core_metrics.append(clean_line.replace("number of currently ", ""))
+                    if "detected target collisions" in clean_line: core_metrics.append(clean_line.replace("detected target collisions:", "Conflicts:"))
+                    
+                    if "Dashboard - Cumulative Delay (s):" in clean_line:
+                        val = clean_line.split(":")[-1].strip()
+                        sys_metrics.append(f"Cumulative Delay: {val}s")
+                    if "Dashboard - Task Completion (s):" in clean_line:
+                        val = clean_line.split(":")[-1].strip()
+                        sys_metrics.append(f"Task Completion: {val}s")
+                    if "Dashboard - Peak Throughput (PTP):" in clean_line:
+                        val = clean_line.split(":")[-1].strip()
+                        sys_metrics.append(f"Peak Throughput (PTP): {val}")
+                    if "Dashboard - State Msg Latency (s):" in clean_line:
+                        val = clean_line.split(":")[-1].strip()
+                        sys_metrics.append(f"State Msg Latency: {val}s")
+                    if "Dashboard - Idle Time (s):" in clean_line:
+                        val = clean_line.split(":")[-1].strip()
+                        sys_metrics.append(f"Idle Time: {val}s")
 
-                if sys_metrics or robot_metrics:
+                if sys_metrics or core_metrics:
                     dashboard_content.append("")
-                    dashboard_content.append("📊 REAL-TIME ANALYTICS".center(term_w))
+                    dashboard_content.append("📊 FLEET-WIDE ANALYTICS".center(term_w))
                     dashboard_content.append("─" * term_w)
                     
-                    # Print system metrics side by side
-                    if sys_metrics:
-                        row = " | ".join(sys_metrics[:3])
-                        dashboard_content.append(row.center(term_w))
-                        if len(sys_metrics) > 3:
-                            dashboard_content.append(" | ".join(sys_metrics[3:]).center(term_w))
-                            
-                    if robot_metrics:
+                    if core_metrics:
+                        dashboard_content.append(" | ".join(core_metrics).center(term_w))
                         dashboard_content.append("")
-                        # Create small columns for robot metrics
-                        chunks = [robot_metrics[i:i+3] for i in range(0, len(robot_metrics), 3)]
-                        for chunk in chunks:
-                            dashboard_content.append("   ".join(chunk).center(term_w))
+
+                    if sys_metrics:
+                        row1 = " | ".join(sys_metrics[:3])
+                        dashboard_content.append(row1.center(term_w))
+                        if len(sys_metrics) > 3:
+                            row2 = " | ".join(sys_metrics[3:])
+                            dashboard_content.append(row2.center(term_w))
                             
                     dashboard_content.append("═" * term_w)
 

@@ -16,14 +16,15 @@ COPY requirements.txt ./
 # Install any needed packages specified in requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Use a build argument to manually bust the cache from this layer onwards
+# Usage: docker compose build --build-arg CACHEBUST=$(date +%s)
+ARG CACHEBUST=1
+
 # Copy the current directory contents into the container at /app
 COPY . .
 
 # Set python path to allow imports from root and submodules
 ENV PYTHONPATH=/app:/app/submodules
-
-
-
 
 # Default command
 CMD ["python3", "fleet_management/FmMain.py"]

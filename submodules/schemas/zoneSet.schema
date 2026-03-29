@@ -1,0 +1,254 @@
+{
+  "$schema": "http://json-schema.org/draft/2020-12/schema",
+  "title": "zoneSet",
+  "description": "Zone set detailing a dedicated map.",
+  "subtopic": "/zoneSet",
+  "type": "object",
+  "required": [
+    "headerId",
+    "timestamp",
+    "version",
+    "manufacturer",
+    "serialNumber",
+    "mapId",
+    "zoneSetId",
+    "zones"
+  ],
+  "properties": {
+    "headerId": {
+      "type": "integer",
+      "description": "headerId of the message. Incremented per topic with each sent message."
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Timestamp in ISO8601 format (YYYY-MM-DDTHH:mm:ss.fffZ)."
+    },
+    "version": {
+      "type": "string",
+      "description": "Version of the protocol [Major].[Minor].[Patch]"
+    },
+    "manufacturer": {
+      "type": "string",
+      "description": "Manufacturer of the AGV."
+    },
+    "serialNumber": {
+      "type": "string",
+      "description": "Serial number of the AGV."
+    },
+    "mapId": {
+      "type": "string",
+      "description": "Globally unique identifier of the map the zone set refers to."
+    },
+    "zoneSetId": {
+      "type": "string",
+      "description": "Globally unique identifier of the zone set."
+    },
+    "zoneSetDescription": {
+      "type": "string",
+      "description": "Human-readable description of the zone set."
+    },
+    "zones": {
+      "type": "array",
+      "description": "Array of zone objects.",
+      "items": {
+        "$ref": "#/definitions/zone"
+      }
+    }
+  },
+  "definitions": {
+    "zone": {
+      "type": "object",
+      "required": ["zoneId", "zoneType", "vertices"],
+      "properties": {
+        "zoneId": {
+          "type": "string",
+          "description": "Locally unique identifier within the zone set."
+        },
+        "zoneType": {
+          "type": "string",
+          "description": "Zone category.",
+          "enum": [
+            "BLOCKED",
+            "LINE_GUIDED",
+            "RELEASE",
+            "COORDINATED_REPLANNING",
+            "SPEED_LIMIT",
+            "ACTION",
+            "PRIORITY",
+            "PENALTY",
+            "DIRECTED",
+            "BIDIRECTED"
+          ]
+        },
+        "zoneDescription": {
+          "type": "string",
+          "description": "User-defined human-readable descriptor."
+        },
+        "vertices": {
+          "type": "array",
+          "minItems": 3,
+          "description": "Array of vertices defining the polygon of the zone.",
+          "items": {
+            "$ref": "#/definitions/vertex"
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "zoneType": { "const": "SPEED_LIMIT" } } },
+          "then": {
+            "required": ["maxSpeed"],
+            "properties": {
+              "maxSpeed": {
+                "type": "number",
+                "description": "Maximum speed allowed within this zone."
+              }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "zoneType": { "const": "ACTION" } } },
+          "then": {
+            "required": ["entryActions", "duringActions", "exitActions"],
+            "properties": {
+              "entryActions": {
+                "type": "array",
+                "description": "Actions executed upon entering the zone.",
+                "items": { "$ref": "#/definitions/action" }
+              },
+              "duringActions": {
+                "type": "array",
+                "description": "Actions executed while traversing the zone.",
+                "items": { "$ref": "#/definitions/action" }
+              },
+              "exitActions": {
+                "type": "array",
+                "description": "Actions executed upon leaving the zone.",
+                "items": { "$ref": "#/definitions/action" }
+              }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "zoneType": { "const": "PRIORITY" } } },
+          "then": {
+            "required": ["priorityFactor"],
+            "properties": {
+              "priorityFactor": {
+                "type": "number",
+                "minimum": 0.0,
+                "maximum": 1.0,
+                "description": "Relative priority factor (0=no preference, 1=max preference)."
+              }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "zoneType": { "const": "PENALTY" } } },
+          "then": {
+            "required": ["penaltyFactor"],
+            "properties": {
+              "penaltyFactor": {
+                "type": "number",
+                "minimum": 0.0,
+                "maximum": 1.0,
+                "description": "Relative penalty factor (0=no penalty, 1=avoid if possible)."
+              }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "zoneType": { "const": "DIRECTED" } } },
+          "then": {
+            "required": ["direction", "limitation"],
+            "properties": {
+              "direction": {
+                "type": "number",
+                "description": "Preferred direction of travel (radians)."
+              },
+              "limitation": {
+                "type": "string",
+                "enum": ["SOFT", "RESTRICTED", "STRICT"],
+                "description": "Constraint type for direction adherence."
+              }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "zoneType": { "const": "BIDIRECTED" } } },
+          "then": {
+            "required": ["direction", "limitation"],
+            "properties": {
+              "direction": {
+                "type": "number",
+                "description": "Primary direction of allowed travel (and +π for opposite)."
+              },
+              "limitation": {
+                "type": "string",
+                "enum": ["SOFT", "RESTRICTED"],
+                "description": "Constraint for bidirectional travel."
+              }
+            }
+          }
+        }
+      ]
+    },
+    "vertex": {
+      "type": "object",
+      "required": ["x", "y"],
+      "properties": {
+        "x": {
+          "type": "number",
+          "description": "X-coordinate (project coordinate system)."
+        },
+        "y": {
+          "type": "number",
+          "description": "Y-coordinate (project coordinate system)."
+        }
+      }
+    },
+    "action": {
+      "type": "object",
+      "required": ["actionId", "actionType", "blockingType"],
+      "properties": {
+        "actionId": {
+          "type": "string",
+          "description": "Unique identifier for the action (e.g., UUID)."
+        },
+        "actionType": {
+          "type": "string",
+          "description": "Type of action as defined in the project."
+        },
+        "actionDescription": {
+          "type": "string",
+          "description": "Human-readable description of the action."
+        },
+        "blockingType": {
+          "type": "string",
+          "enum": ["NONE", "SOFT", "SINGLE", "HARD"],
+          "description": "Defines how the action blocks other operations."
+        },
+        "actionParameters": {
+          "type": "array",
+          "description": "Array of parameters for the action.",
+          "items": { "$ref": "#/definitions/actionParameter" }
+        }
+      }
+    },
+    "actionParameter": {
+      "type": "object",
+      "required": ["key", "value"],
+      "properties": {
+        "key": {
+          "type": "string",
+          "description": "Key for the action parameter."
+        },
+        "value": {
+          "type": ["array", "boolean", "number", "string", "object"],
+          "description": "Value for the action parameter."
+        }
+      }
+    }
+  }
+}

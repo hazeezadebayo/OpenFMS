@@ -7,7 +7,8 @@ from pathlib import Path
 from FmTaskHandler import FmTaskHandler
 
 from dataclasses import dataclass
-from typing import Any
+from collections import defaultdict
+from typing import DefaultDict, Any, Optional, List, Dict, Tuple, Union, cast
 
 @dataclass
 class RobotContext:
@@ -60,9 +61,9 @@ class FmTrafficHandler():
         # initialize the task network dictionary
         self.task_dictionary = task_dict if task_dict else {}
 
-        self.temp_robot_delay_time = {}
+        self.temp_robot_delay_time: Dict[str, Tuple[float, float]] = {}
         self.wait_time_default = 10.5 # [secs]
-        self.mutex_groups = [] #  ['C10', 'C11', 'C3'] Store list of lists e.g. [['C1', 'C2'], ['C10', 'C11']]
+        self.mutex_groups = [] # Store list of lists e.g. [['C1', 'C2'], ['C10', 'C11']]
         self.collision_tracker = 0
         self.robots_in_collision = set()
 
@@ -70,6 +71,7 @@ class FmTrafficHandler():
         # Semantics: "robot is a live participant in the current fleet session".
         # Populated by FmMain.on_mqtt_message whenever a state message arrives.
         self.online_robots: set = set()  # r_ids that have published at least one state
+        self.traffic_control_dict: dict = {} # Shadow variable for visualization
 
     # --------------------------------------------------------------------------------------------
 
@@ -334,7 +336,7 @@ class FmTrafficHandler():
             # If ctx.agv_position is still None, the DB fetch failed transiently
             # and we must skip — otherwise we'd act on the previous robot's stale state.
             traffic_control, unassigned, mex_record, ctx = self._fetch_current_robot_data(f_id, r_id, m_id)
-            if ctx is not None and ctx.agv_position is not None:
+            if (ctx is not None) and (ctx.agv_position is not None):
                 self._handle_robot_traffic_status(f_id, r_id, m_id, v_id, traffic_control, mex_record, ctx)
         except (ValueError, TypeError) as error:
             # log viz:
@@ -349,7 +351,7 @@ class FmTrafficHandler():
 
     # --------------------------------------------------------------------------------------------
 
-    def _fetch_current_robot_data(self, f_id, _r_id, m_id):
+    def _fetch_current_robot_data(self, f_id: str, r_id: str, m_id: str) -> Tuple[List[str], List[Dict], Dict, Optional[RobotContext]]:
         """
         Inputs:
             f_id: Fleet ID to query.
@@ -364,9 +366,7 @@ class FmTrafficHandler():
         """
         # Always reset first — prevents stale data from a prior robot (or prior
         # successful cycle) from surviving into this robot's failed-fetch path.
-
-
-        fb_rec = self.fetch_mex_data(f_id, r_id=_r_id, m_id=m_id)
+        fb_rec = self.fetch_mex_data(f_id, r_id=r_id, m_id=m_id)
 
         try:
             # write to class variables for active robot params
@@ -401,9 +401,8 @@ class FmTrafficHandler():
             )
 
             mex_record = fb_rec["mex_data"]
-
-            self.last_traffic_dict = fb_rec["traffic_control"]
-            traffic_ = set([n for nodes in self.last_traffic_dict.values() for n in nodes]) if isinstance(self.last_traffic_dict, dict) else set(self.last_traffic_dict)
+            self.traffic_control_dict = fb_rec["traffic_control_dict"]
+            traffic_control = fb_rec["traffic_control"]
             unassigned = fb_rec["unassigned"]
         except KeyError as key_err:
             # log viz:
@@ -421,11 +420,11 @@ class FmTrafficHandler():
                 "_fetch_current_robot_data",
                 "warn")
             return [], [], {}, None
-        return traffic_, unassigned, mex_record, ctx
+        return traffic_control, unassigned, mex_record, ctx
 
     # --------------------------------------------------------------------------------------------
 
-    def _handle_robot_traffic_status(self, f_id, _r_id, m_id, v_id, traffic_control, mex_record, ctx):
+    def _handle_robot_traffic_status(self, f_id, _r_id, m_id, v_id, traffic_control: list[str], mex_record, ctx):
         """
         Manage robot traffic status by verifying next_stop occupancy and handling conflicts.
 
@@ -469,22 +468,18 @@ class FmTrafficHandler():
         # -----------------------------------------------------------------------
 
         # traffic_control is now an O(1) set of all occupied nodes
-        active_traffic_nodes = traffic_control
-        
-        expanded_traffic = list(active_traffic_nodes)
+        expanded_traffic_control = list(traffic_control)
         for group in self.mutex_groups:
             occupied_by_other = any(
-                node in active_traffic_nodes and node != reserved_checkpoint
+                node in traffic_control and node != reserved_checkpoint
                 for node in group
             )
             if occupied_by_other:
                 for node in group:
-                    if node not in expanded_traffic:
-                        expanded_traffic.append(node)
+                    if node not in expanded_traffic_control:
+                        expanded_traffic_control.append(node)
+        print("expanded_traffic_control: ", expanded_traffic_control)  
         
-        # We pass expanded_traffic down for simple node occupancy checks
-        checking_traffic_control = expanded_traffic
-
         # -----------------------------------------------------------------------
         
         # Determine base coordinate based on reserved checkpoint type
@@ -540,8 +535,8 @@ class FmTrafficHandler():
                     self._handle_waitpoint_case(f_id, _r_id, m_id, v_id, ctx)
                     return
 
-                # Check if next stop is occupied in traffic control
-                if next_stop_id in checking_traffic_control:
+                # Check if next stop is occupied in the expanded_traffic_control
+                if next_stop_id in expanded_traffic_control:
                     # log viz:
                     self.task_handler.visualization_handler.terminal_log_visualization(
                         f"Robot {_r_id}: next_stop_id {next_stop_id} occupied.",
@@ -561,7 +556,7 @@ class FmTrafficHandler():
                         # ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
                         self._handle_last_mile_conflict_case(f_id, _r_id, m_id, v_id,
                                                             reserved_checkpoint, next_stop_id,
-                                                            checking_traffic_control, ctx)
+                                                            expanded_traffic_control, ctx)
                     else:
                         # ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
                         # _handle_waiting_robot_conflict_case
@@ -581,7 +576,7 @@ class FmTrafficHandler():
                                 "info")
                         else:
                             self._handle_active_mex_conflict(f_id, _r_id, m_id, v_id,
-                                                            next_stop_id, checking_traffic_control,
+                                                            next_stop_id, expanded_traffic_control,
                                                             reserved_checkpoint,
                                                             next_stop_coordinate,
                                                             mex_record, ctx)
@@ -778,18 +773,16 @@ class FmTrafficHandler():
         try:
             # get new active map
             temp_map_name = self.get_map(f_id, ctx.checkpoints[0], ctx.horizon[0])
-            # ensure that map name is different from current map
             # Only compare maps if we already know the active map.
             # On startup, temp_fb_active_map_name is None because the robot
             # hasn't received a downloadMap yet — comparing None to a map_id
-            # would always trigger a false 'elevator' warning every cycle.
+            # would always trigger a false warning every cycle.
             if ctx.active_map_name is not None and ctx.active_map_name != temp_map_name:
-                # then we have a problem
                 self.task_handler.visualization_handler.terminal_log_visualization(
-                    f"r_id: {_r_id} is in an elevator but can not fetch new map.",
+                    f"r_id: {_r_id} elevator flag {temp_map_name} and active map {ctx.active_map_name} problem.",
                     "FmTrafficHandler",
                     "_handle_waitpoint_case",
-                    "warn")
+                    "error")
             # estimate goal nodes time of arrival
             temp_fb_node_eta = self.calculate_estimated_arrival_time(self.wait_time_default)
             # prepare the order update message
@@ -823,8 +816,8 @@ class FmTrafficHandler():
 
     # --------------------------------------------------------------------------------------------
 
-    def check_available_last_mile_dock(self, reserved_checkpoint, traffic_control,
-                                       task_dict, start_idx):
+    def check_available_last_mile_dock(self, reserved_checkpoint, traffic_control: list[str],
+                                       task_dict, start_idx, ctx: RobotContext):
         """Handle dock availability and path planning."""
         available_last_mile_dock = False
 
@@ -891,14 +884,16 @@ class FmTrafficHandler():
                     reserved_checkpoint,
                     traffic_control,
                     task_dict,
-                    4)
+                    4,
+                    ctx)
         elif (next_stop_id in ctx.landmarks[3:]) and (ctx.landmarks[2] in ["move", "charge"]):
             if len(ctx.landmarks[3:]) > 1:
                 available_last_mile_dock = self.check_available_last_mile_dock(
                     reserved_checkpoint,
                     traffic_control,
                     task_dict,
-                    2)
+                    2,
+                    ctx)
 
         if available_last_mile_dock:
             self._handle_no_conflict_case(f_id, _r_id, m_id, v_id, ctx) # publish it.
@@ -976,18 +971,16 @@ class FmTrafficHandler():
         try:
             # get new active map
             temp_map_name = self.get_map(f_id, ctx.checkpoints[0], ctx.horizon[0])
-            # ensure that map name is different from current map
             # Only compare maps if we already know the active map.
             # On startup, temp_fb_active_map_name is None because the robot
             # hasn't received a downloadMap yet — comparing None to a map_id
-            # would always trigger a false 'elevator' warning every cycle.
+            # would always trigger a false warning every cycle.
             if ctx.active_map_name is not None and ctx.active_map_name != temp_map_name:
-                # then we have a problem
                 self.task_handler.visualization_handler.terminal_log_visualization(
-                    f"r_id: {_r_id} is in an elevator but can not fetch new map.",
+                    f"r_id: {_r_id} elevator flag {temp_map_name} and active map {ctx.active_map_name} problem.",
                     "FmTrafficHandler",
                     "_handle_no_conflict_case",
-                    "warn")
+                    "error")
             # estimate goal nodes time of arrival
             eta = self.estimate_time_to_node(robot_pos = ctx.agv_position,
                 node_pos = ctx.checkp_itinerary[ctx.checkpoints.index(ctx.horizon[0])],
@@ -1030,7 +1023,7 @@ class FmTrafficHandler():
 
     # --------------------------------------------------------------------------------------------
 
-    def fetch_mex_data(self, f_id, r_id=None, m_id=None):
+    def fetch_mex_data(self, f_id: str, r_id: Optional[str] = None, m_id: Optional[str] = None) -> Dict[str, Any]:
         """
         Unified fleet and robot data fetcher.
         This version replaces the 3 prior call styles and returns everything at once:
@@ -1049,8 +1042,9 @@ class FmTrafficHandler():
         """
 
         mex_record = {}
-        traffic_control = {}
         unassigned = []
+        traffic_control_dict: dict[str, list[str]] = {}
+
 
         # -----------------------------------------------
         # Build robot_states from in-memory cache.
@@ -1059,10 +1053,10 @@ class FmTrafficHandler():
         # This makes state management cost O(1) per robot regardless of fleet size,
         # instead of the previous O(N) DB table scan.
         # -----------------------------------------------
-        raw_cache = self.task_handler.state_handler.cache   # { r_id: raw_mqtt_state_msg }
+        state_cache = self.task_handler.state_handler.cache   # { r_id: raw_mqtt_state_msg }
 
         # Fall back to DB scan only if the cache is completely empty (cold start / first boot).
-        if not raw_cache:
+        if not state_cache:
             state_recs = self.task_handler.state_handler.fetch_all_data(f_id, m_id)
             if state_recs:
                 # Populate the cache from DB rows so subsequent calls never hit DB again.
@@ -1081,8 +1075,8 @@ class FmTrafficHandler():
                 man_idx = col.index('manufacturer')
                 for row in state_recs:
                     sn = row[s_idx + 1]
-                    # Reconstruct a minimal raw-msg-like dict from DB columns.
-                    raw_cache[sn] = {
+                    # Reconstruct a minimal raw-state_cache-like dict from DB columns.
+                    state_cache[sn] = {
                         "serialNumber": sn,
                         "version": row[ver_idx + 1],
                         "manufacturer": row[man_idx + 1],
@@ -1100,7 +1094,7 @@ class FmTrafficHandler():
 
         # Also get order records from DB (orders are only written by the FM, not pushed via MQTT).
         order_recs = self.task_handler.order_handler.fetch_all_data(f_id, m_id)
-        if not raw_cache or not order_recs:
+        if not state_cache or not order_recs:
             self.task_handler.visualization_handler.terminal_log_visualization(
                 "No state or order records to dissect.",
                 "FmTrafficHandler",
@@ -1113,46 +1107,12 @@ class FmTrafficHandler():
                 "unassigned": []
             }
 
-        # Dict to store traffic control layout {robot_serial: node_id}
-        traffic_control_dict = {}
-
-        # First pass: map nodes to occupier for quick conflict lookups.
-        node_occupancy = {}
-        for row in order_recs:
-            o_id = row[5] # serial_number
-            o_base_node = None
-            try:
-                # nodes field is at index 9 for order
-                o_nodes = row[9] if isinstance(row[9], list) else json.loads(row[9])
-                if o_nodes:
-                    # Target node is nodes[1] if present, else nodes[0]
-                    if len(o_nodes) > 1:
-                        o_base_node = o_nodes[1].get("nodeId")
-                    else:
-                        o_base_node = o_nodes[0].get("nodeId")
-            except Exception:
-                continue
-
-            if o_base_node:
-                traffic_control_dict[o_id] = o_base_node
-                
-                # Check for completed or cancelled tasks
-                order_uuid = row[6] # order_id
-                parts = order_uuid.rsplit('_', 1)
-                suffix = parts[-1] if len(parts) > 1 else ""
-                
-                # We only populate node_occupancy if the order is still "live"
-                if suffix not in ["completed", "cancelled"]:
-                    node_occupancy[o_base_node] = row
-
-
-
         # -----------------------------------------------
         # Pass 1: Parse STATE from in-memory cache
-        # Each raw_cache entry is the raw MQTT state payload (dict with camelCase keys).
+        # Each state_cache entry is the raw MQTT state payload (dict with camelCase keys).
         # -----------------------------------------------
-        robot_states = {}
-        for serial_number, raw_msg in raw_cache.items():
+        robot_states: Dict[str, Dict[str, Any]] = {}
+        for serial_number, raw_msg in state_cache.items():
             try:
                 agv_position  = raw_msg.get("agvPosition") or {}
                 errors        = raw_msg.get("errors") or []
@@ -1180,6 +1140,11 @@ class FmTrafficHandler():
                 record["ang_vel"] = float(ang_vel) if str(ang_vel).replace('.', '', 1).lstrip('-').isdigit() else 0.0
 
                 record["active_map"] = self.process_maps(maps)
+                # self.task_handler.visualization_handler.terminal_log_visualization(
+                #     f"{serial_number}: active map {record['active_map']}, and uploaded maps {maps}.",
+                #     "FmTrafficHandler",
+                #     "fetch_mex_data",
+                #     "warn")
 
                 e_stop = safety_state.get("eStop", "NONE")
                 record["halt"] = False
@@ -1226,11 +1191,11 @@ class FmTrafficHandler():
                 continue
 
         # -----------------------------------------------
-        # Pass 2: Get AGV dimensions and speed from factsheet cache
+        # Pass 2: Get AGV dimensions and speed from FACTSHEET cache
         # factsheet_cache holds the raw MQTT factsheet payload, populated on first
         # factsheet message arrival — no DB read needed after that.
         # -----------------------------------------------
-        for serial_number, rec in robot_states.items():
+        for serial_number, state_rec in robot_states.items():
             fs = self.task_handler.factsheet_handler.cache.get(serial_number)
             if fs:
                 phys = fs.get("physicalParameters", {})
@@ -1249,8 +1214,8 @@ class FmTrafficHandler():
                     "fetch_mex_data",
                     "warn")
                 continue
-            rec["speed_min"] = float(speed_min)
-            rec["agv_size"]  = [float(agv_width), float(agv_length)]
+            state_rec["speed_min"] = float(speed_min)
+            state_rec["agv_size"]  = [float(agv_width), float(agv_length)]
 
         # -----------------------------------------------
         # Pass 3: Parse ORDER table
@@ -1280,10 +1245,10 @@ class FmTrafficHandler():
                 if serial_number not in robot_states:
                     continue
 
-                rec = robot_states[serial_number]
-                rec["order_timestamp"] = timestamp
-                rec["header_id"] = header_id
-                rec["order_id"] = order_id.split(',')[0]
+                state_rec = robot_states[serial_number]
+                state_rec["order_timestamp"] = timestamp
+                state_rec["header_id"] = header_id
+                state_rec["order_id"] = order_id.split(',')[0]
 
                 waypoints = [
                     (node['nodeId'], node['nodePosition']['x'], node['nodePosition']['y'],
@@ -1321,103 +1286,88 @@ class FmTrafficHandler():
                     # Populate traffic control if node is released
                     # we also want to skip an order that doesnt have a serial number because it implies unassigned task.
                     if release_state and \
-                        (not serial_number.startswith("unassigned_")) and (serial_number not in self.task_handler.ignore_list):
-                        
-                        robot_nodes = traffic_control.setdefault(serial_number, [])
-                        if node_id not in robot_nodes:
-                            robot_nodes.append(node_id)
-                        
+                        (not serial_number.startswith("unassigned_")) \
+                            and (serial_number not in self.task_handler.ignore_list):
+
+                        # Auto-create the list for the robot if it's the first time we see it
+                        traffic_control_dict.setdefault(serial_number, [])
+
+                        # Now you don’t need setdefault
+                        if node_id not in cast(List[str], traffic_control_dict[serial_number]):
+                            cast(List[str], traffic_control_dict[serial_number]).append(node_id)
+
                         # [Spoofing] Also protect the corresponding physical checkpoint if a Waitpoint is occupied
                         if node_id.startswith('W'):
                             numeric_part = ''.join(filter(str.isdigit, node_id))
                             corresponding_c = f'C{numeric_part}'
-                            if corresponding_c not in robot_nodes:
-                                robot_nodes.append(corresponding_c)
+                            if corresponding_c not in cast(List[str], traffic_control_dict[serial_number]):
+                                cast(List[str], traffic_control_dict[serial_number]).append(corresponding_c)
 
-                # Extracts the last released node from the order to use as the logical 'base' (granted target)
-                last_released_node = rec["base"]
-                for point in waypoints:
-                    node_id, _, _, _, release_state, _, description = point
-                    if release_state:
-                         last_released_node = node_id
-                
-                rec["base"] = last_released_node
-
-                # Extract ETA from node description and check if robot is late
-                description = next((p[6] for p in waypoints if p[0] == last_released_node), "")
-                eta_str = self._extract_eta_from_description(description)
+                        # check if the robot is getting late i.e. current_time > est_arrival_time:
+                        # Extract ETA from node description and check if robot is late
+                        eta_str = self._extract_eta_from_description(description)
+                        if eta_str and self.check_robot_arrival(eta_str):
+                            self.task_handler.visualization_handler.terminal_log_visualization(
+                                f"Robot {serial_number} is running late.",
+                                "FmTrafficHandler",
+                                "fetch_mex_data",
+                                "warn")
 
                 # get merged nodes
-                rec["merged_nodes"] = node_ids
-                rec["dock"] = ['low']
-                rec["dock_action_done"] = False
-                rec["horizon"] = []
-                rec["horizon_release"] = []
-                rec["agv_status"] = 'red'
+                state_rec["merged_nodes"] = node_ids
+                state_rec["dock"] = ['low']
+                state_rec["dock_action_done"] = False
+                state_rec["horizon"] = []
+                state_rec["horizon_release"] = []
+                state_rec["agv_status"] = 'red'
 
                 # Keep orders that have not been assigned for later.
                 if serial_number.startswith("unassigned_"):
                     # Ensure correct dictionary access based on provided keys.
-                    # print("1: ", order_actions_list[0][0])
-                    # print("2: ", order_actions_list[0][0]['actionParameters'][0]['value'])
-
+                    # print("1:",order_actions_list[0][0],"2:",order_actions_list[0][0]['actionParameters'][0]['value'])
                     # Fetch the desired 'landmark' value.
                     landmark_value = order_actions_list[0][0]['actionParameters'][0]['value']
                     unassigned.append((serial_number, timestamp, landmark_value))
 
-                node_states = rec.get("node_states", [])
-                base = rec.get("base", '')
+                # since we dont want to issue more node targets, if true.
+                state_rec["halt"] = order_id.endswith("_cancelled") or order_id.endswith("_completed")
 
-                if order_id.endswith("_cancelled") or order_id.endswith("_completed"):
-                    # since we dont want to issue more node targets, if true.
-                    rec["halt"] = True
+                # set agv status
+                state_rec["agv_status"] = "green" if state_rec.get("node_states", []) else "red"
 
-                if node_states:
-                    # ensure that this is only checked if robot has active order.
-                    # check if the robot is getting late i.e. current_time > est_arrival_time:
-                    if eta_str and self.check_robot_arrival(eta_str):
-                        self.task_handler.visualization_handler.terminal_log_visualization(
-                            f"Robot {serial_number} is running late.",
-                            "FmTrafficHandler",
-                            "fetch_mex_data",
-                            "warn")
-                    # set agv status
-                    rec["agv_status"] = 'green'
-                else:
-                    rec["agv_status"] = 'red'
-
+                base = state_rec.get("base", '')
                 if base.split(',')[0] != '':
-                    rec["base"] = base.split(',')[0]
+                    state_rec["base"] = base.split(',')[0]
                     # is the first element of the node_ids approved for me or not. did i reserve it?
                     # if yes, then it is my base:
                     if node_ids[0].startswith('C'):
                         if checkps_release[0]:
                             # implying a continuation of order "update etc."
-                            rec["horizon"] = checkps[1:]
-                            rec["horizon_release"] = checkps_release[1:]
+                            state_rec["horizon"] = checkps[1:]
+                            state_rec["horizon_release"] = checkps_release[1:]
                         # if it is not, its an horizon:
                         else:
                             # implying this is a new order
-                            rec["horizon"] = checkps
-                            rec["horizon_release"] = checkps_release
+                            state_rec["horizon"] = checkps
+                            state_rec["horizon_release"] = checkps_release
                     else: # we have a waitpoint wx cx cy. e.g. w17, c17 and c18
                         if len(node_ids) >= 3:
-                            rec["horizon"] = checkps[2:] # [0] c17, [1] c18, then.. horizon[2:]
-                            rec["horizon_release"] = checkps_release[2:]
+                            state_rec["horizon"] = checkps[2:] # [0] c17, [1] c18, then.. horizon[2:]
+                            state_rec["horizon_release"] = checkps_release[2:]
                         else:
                             # houstin we have a problem. why we in a waitpoint with less than 3 nodes? wx cx cy.
                             raise ValueError("[FmTrafficHandler] Not enough nodes.")
                 else:
                     # agv had no previous task before this. hence, everything is an horizon
-                    rec["horizon"] = checkps
-                    rec["horizon_release"] = checkps_release
-                    rec["base"] = '' # base is empty
+                    state_rec["horizon"] = checkps
+                    state_rec["horizon_release"] = checkps_release
+                    state_rec["base"] = checkps[0] #'' # base is empty
 
-                rec["c_pnts"] = checkps
-                rec["c_pnts_pos"] = c_pnts_pos if checkps else []
-                rec["w_pnts"] = waitps
-                rec["w_pnts_pos"] = w_pnts_pos if waitps else []
-                rec["w_pnts_release"] = waitps_release
+                state_rec["c_pnts"] = checkps
+                state_rec["c_pnts_pos"] = c_pnts_pos if checkps else []
+                state_rec["w_pnts"] = waitps
+                state_rec["w_pnts_pos"] = w_pnts_pos if waitps else []
+                state_rec["w_pnts_release"] = waitps_release
 
                 # Process docking actions
                 if order_actions_list:
@@ -1426,18 +1376,18 @@ class FmTrafficHandler():
                             order_act = order_act_[0]
                             # Process actions for docking
                             if order_act.get('actionType') == 'dock':
-                                rec["dock"] = order_act.get('actionParameters', [{}])[0].get('value', [])
-                                rec["pending_dock_action"] = order_act  # STORE ORIGINAL FOR IDEMPOTENT PINGS
+                                state_rec["dock"] = order_act.get('actionParameters', [{}])[0].get('value', [])
+                                state_rec["pending_dock_action"] = order_act  # STORE ORIGINAL FOR IDEMPOTENT PINGS
 
-                                if rec.get("action_states"):
-                                    for state_act in rec["action_states"]:
+                                if state_rec.get("action_states"):
+                                    for state_act in state_rec["action_states"]:
                                         # STRICT VDA 5050 IDEMPOTENCY: Match original order actionId
                                         if state_act.get("actionId") == order_act.get('actionId'):
                                             action_status = state_act.get("actionStatus", "")
                                             if action_status == "FINISHED":
-                                                rec["dock_action_done"] = True
+                                                state_rec["dock_action_done"] = True
                                             elif action_status == "FAILED":
-                                                rec["halt"] = True
+                                                state_rec["halt"] = True
                                                 self.task_handler.visualization_handler.terminal_log_visualization(
                                                     f"Robot {serial_number} dock failed.",
                                                     "FmTrafficHandler",
@@ -1463,9 +1413,9 @@ class FmTrafficHandler():
                 next_stop_id = robot_data["horizon"][0]
 
         if next_stop_id:
-            for serial_number, rec in robot_states.items():
-                if rec.get("base") == next_stop_id:
-                    mex_record = rec
+            for serial_number, state_rec in robot_states.items():
+                if state_rec.get("base") == next_stop_id:
+                    mex_record = state_rec
                     break
 
         # --- ANALYTICS: COLLISION TRACKING ---
@@ -1522,25 +1472,63 @@ class FmTrafficHandler():
         # Update stateful set
         self.robots_in_collision = current_collision_robots
 
+
+
+
         # -----------------------------------------------
         # Clean up and return
         # -----------------------------------------------
-        # Remove empty strings and 'none' (case-insensitive) from traffic_control
-        traffic_control_clean = {}
-        if isinstance(traffic_control, dict):
-            for rid, nodes in traffic_control.items():
-                clean_nodes = [tc for tc in nodes if tc != '' and tc.lower() != 'none']
-                if clean_nodes:
-                    traffic_control_clean[rid] = clean_nodes
-        else:
-            traffic_control_clean = traffic_control
+        # Standardize traffic_control_dict: remove empty nodes/records and filter out empty robot entries
+        traffic_control_dict = {
+            rid: [node for node in nodes if node and node.lower() != 'none']
+            for rid, nodes in traffic_control_dict.items()
+        }
+        traffic_control_dict = {rid: nodes for rid, nodes in traffic_control_dict.items() if nodes}
+
+        # Flatten for logical operations
+        traffic_control_list = list(set(
+            node for nodes in traffic_control_dict.values() for node in nodes
+        ))
 
         return {
             "robot_data": robot_states.get(r_id, {}),
             "mex_data": mex_record,
-            "traffic_control": traffic_control_clean,
+            "traffic_control": traffic_control_list,
+            "traffic_control_dict": traffic_control_dict,
             "unassigned": unassigned
         }
+
+
+
+
+    # --------------------------------------------------------------------------------------------
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
     # --------------------------------------------------------------------------------------------
 
@@ -2174,10 +2162,9 @@ class FmTrafficHandler():
             # get new active map
             temp_map_name = self.get_map(f_id, ctx.checkpoints[0], ctx.horizon[0])
             # ensure that map name is different from current map
-            if ctx.active_map_name != temp_map_name:
-                # then we have a problem
+            if ctx.active_map_name is not None and ctx.active_map_name != temp_map_name:
                 self.task_handler.visualization_handler.terminal_log_visualization(
-                    f"r_id: {r_id} is in an elevator but can not fetch new map.",
+                    f"r_id: {r_id} elevator flag {temp_map_name} and active map {ctx.active_map_name} problem.",
                     "FmTrafficHandler",
                     "update_robot_status",
                     "warn")
@@ -2243,10 +2230,9 @@ class FmTrafficHandler():
             # get new active map
             mex_map_name = self.get_map(f_id, mex_checkpoints[0], mex_horizon[0])
             # ensure that map name is different from current map
-            if mex_active_map_name == mex_map_name:
-                # then we have a problem
+            if mex_active_map_name is not None and mex_active_map_name != mex_map_name:
                 self.task_handler.visualization_handler.terminal_log_visualization(
-                    f"mex_r_id: {mex_r_id} is in an elevator but can not fetch new map.",
+                    f"mex_r_id: {mex_r_id} elevator flag {mex_map_name} and active map {mex_active_map_name} problem.",
                     "FmTrafficHandler",
                     "update_robot_status",
                     "error")

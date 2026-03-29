@@ -2,17 +2,17 @@
 
 # OpenFMS Unified Test & Run Script
 # ======================================================
-# MODE 1 (default): Automated Scenario via FmInterface
-#   Generates a map topology, boots infra, and runs a
-#   scripted task scenario end-to-end.
-#   Usage:  ./run_openfms.sh [scenario_name]
-#   Eg:     ./run_openfms.sh random
+# MODE 1 (default): Custom or Automated Scenario via 
+#   FmInterface Generates a map topology, boots infra, 
+#   and runs a scripted task scenario end-to-end.
+#     Usage:  ./run_openfms.sh S1   (Run S1 or S2, S3..)
+#     Usage:  ./run_openfms.sh N20  (Spawn 20 amr or N99..)
 #
 # MODE 2: Interactive FmMain (Direct Terminal Control)
 #   Boots infra and the manager container, then attaches
 #   to it so you can dispatch orders, pause, cancel, and
 #   manage the fleet from the live terminal menu.
-#   Usage:  ./run_openfms.sh --interactive
+#     Usage:  ./run_openfms.sh --interactive
 # ======================================================
 
 # ── Parse arguments ─────────────────────────────────────
@@ -20,7 +20,9 @@ if [ "$1" == "--interactive" ] || [ "$1" == "-i" ]; then
     MODE=interactive
 else
     MODE=scenario
-    SCENARIO=${1:-random}
+    # If no argument is provided, default to N2 (Procedural 2-robot setup)
+    # because the Python FmInterface now rejects the 'random' keyword.
+    SCENARIO=${1:-N2}
 fi
 
 # ── Shared pre-flight: wipe stale containers and logs ───
@@ -67,6 +69,8 @@ if [ "$MODE" == "scenario" ]; then
         exit 1
     fi
 
+    # 'docker compose run' is designed specifically to ignore the command defined in the YAML file.
+    # the 'command' in docker-compose.yml service only executes if we use 'docker compose up'.
     docker compose run --rm scenario python3 fleet_management/FmInterface.py generate "$SCENARIO"
     if [ $? -ne 0 ]; then
         echo "❌ Failed to generate map. Aborting."
@@ -114,6 +118,7 @@ if [ "$MODE" == "scenario" ]; then
     echo ""
     echo "================================================================"
     echo "✅ Scenario complete."
+    echo "   🔍 RealTime Nav:    docker compose up dashboard"
     echo "   📋 Output log:     cat logs/FmLogHandler.log"
     echo "   🔍 Simulator feed: docker compose logs -f simulator"
     echo "   🛑 Stop all:       ./kill_openfms.sh"
@@ -184,7 +189,7 @@ elif [ "$MODE" == "interactive" ]; then
     echo "  [q] Quit the manager"
     echo ""
     echo "  ⌨️  Input format follow on-screen prompts (e.g. node IDs"
-    echo "      must match pattern: AnyAlphabet + number e.g. C3, W12)"
+    echo "      must match pattern: C or W + number e.g. C3, W12)"
     echo ""
     echo "  🔓 To DETACH without stopping: press Ctrl+P, then Ctrl+Q"
     echo "  🛑 To STOP everything after detaching: ./kill_openfms.sh"
@@ -200,6 +205,7 @@ elif [ "$MODE" == "interactive" ]; then
     echo "👋 Detached from FmMain."
     echo "   🔍 Manager logs:    docker compose logs -f manager"
     echo "   🔍 Simulator feed:  docker compose logs -f simulator"
+    echo "   🔍 RealTime Nav:    docker compose up dashboard"
     echo "   🛑 Stop all:        ./kill_openfms.sh"
     echo "================================================================"
 fi

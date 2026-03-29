@@ -44,7 +44,7 @@ class FuzzyTaskDispatcher:
         self.fitness = ctrl.Consequent(np.arange(0, 1.01, 0.01), 'fitness')
 
         self._define_membership_functions(max_idle_time, max_travel_time)
-        self._define_rules()
+        self.rules = self._define_rules()
         self.system = ctrl.ControlSystem(self.rules)
         self.sim = ctrl.ControlSystemSimulation(self.system)
 
@@ -74,7 +74,7 @@ class FuzzyTaskDispatcher:
         self.fitness['good'] = fuzz.trimf(self.fitness.universe, [0.3, 1, 1])
 
     def _define_rules(self):
-        self.rules = [
+        rules = [
             ctrl.Rule(self.task_type['delivery'] & self.idle_time['long'] &
                       (self.battery['medium'] | self.battery['high']) &
                       self.travel_time['short'] & self.payload_efficiency['balanced'],
@@ -94,7 +94,8 @@ class FuzzyTaskDispatcher:
             ctrl.Rule(self.task_type['move'] & (self.battery['high'] | self.travel_time['short']),
                       self.fitness['poor']),
         ]
-
+        return rules
+        
     def compute_completion_time(self, task_type, dist_to_pickup, dist_to_dropoff=0.0,
                                velocity=1.0, current_battery=50.0, payload=0.0, max_payload=100.0,
                                drain_rate=0.1, min_battery=10.0, task_energy_cost=2.0):
@@ -133,7 +134,7 @@ class FuzzyTaskDispatcher:
         travel_time = 0.0
         effective_battery = battery
 
-        if task_type in [0, 2] and dist_to_pickup > 0.0:
+        if task_type in [0, 2] and dist_to_pickup is not None and dist_to_pickup > 0.0:
             travel_time, remaining = self.compute_completion_time(
                 task_type=task_type,
                 dist_to_pickup=dist_to_pickup,
@@ -187,19 +188,16 @@ class FmTaskHandler:
         self.ignore_list = []
         self.cp_ignore_list = []
 
-        self.create_fleet_tables()
-        self.fuzzy_dispatcher = FuzzyTaskDispatcher()
-
-    # --------------------------------------------------------------------------------
-
-    def create_fleet_tables(self):
-        """ create_fleet_tables """
+        # initialize the subscribers and publishers
         self.connection_handler = ConnectionSubscriber(self.fleetname, self.versions, self.db_conn, self.mqttclient, False)
         self.factsheet_handler = FactsheetSubscriber(self.fleetname, self.versions, self.db_conn, self.mqttclient, False)
         self.state_handler = StateSubscriber(self.fleetname, self.versions, self.db_conn, self.mqttclient, False)
         self.visualization_handler = VisualizationSubscriber(self.fleetname, self.versions, self.db_conn, self.mqttclient, self.task_dictionary)
         self.instant_actions_handler = InstantActionsPublisher(self.fleetname, self.versions, self.db_conn, self.mqttclient, False)
         self.order_handler = OrderPublisher(self.fleetname, self.versions, self.db_conn, self.mqttclient, False)
+        
+        self.fuzzy_dispatcher = FuzzyTaskDispatcher()
+
 
     # --------------------------------------------------------------------------------
 
@@ -225,9 +223,30 @@ class FmTaskHandler:
 
     # ----------------------------------------------------------------------------
 
+    def fm_send_task(
+        self, f_id, r_id, from_loc_id, to_loc_id, task_name, task_priority, 
+        robot_state, task_dictionary=None, payload_kg=-1.0
+    ):
+        """ Finalize and file """
+        cleared, checkpoints, agv_itinerary, waitpoints, wait_itinerary, landmark = \
+            self._finalize_task(
+                f_id, r_id, from_loc_id, to_loc_id,
+                task_name, task_priority, robot_state,
+                task_dictionary, payload_kg
+            )
+        if checkpoints and cleared:
+            self.fm_file_task(
+                f_id, r_id, checkpoints, waitpoints,
+                agv_itinerary, wait_itinerary, landmark
+            )
+        return (cleared, checkpoints, agv_itinerary,
+                waitpoints, wait_itinerary, landmark)
+
+    # ----------------------------------------------------------------------------
+
     def fm_send_task_request(
         self, f_id, r_id, from_loc_id, to_loc_id, task_name, task_priority,
-        task_dictionary=None, unassigned=False, override_cleared=False, payload_kg=-1.0
+        task_dictionary=None, is_unassignedTask=False, payload_kg=-1.0
     ):
         """
         Build task, select best robot (or user-specified), and file it.
@@ -247,7 +266,7 @@ class FmTaskHandler:
             return False, None, [], [], [], [], []
 
         # --- Step 2: Get candidate robots (plus all IDs) ---
-        candidates, all_r_ids = self._get_candidate_robots_with_state(
+        candidates, _ = self._get_candidate_robots_with_state(
             f_id, task, payload_kg)
 
         # --- Step 3: Handle if we have candidates ---
@@ -262,15 +281,16 @@ class FmTaskHandler:
             if r_id:
                 forced = next((c for c in candidates if c['r_id'] == r_id), None)
                 if forced:
-                    # ✅ User's chosen robot is available
+                    # ✅ User's chosen robot is available | task does not matter.
                     chosen_r_id = r_id
                     robot_state = forced['robot_state']
                 else:
-                    # ❌ User robot unavailable
-                    if task_name in ('transport', 'loop'):
+                    # ❌ User chosen robot unavailable. do we want to use alternative? 
+                    # if no, can we queue it?
+                    if task_name in ('transport', 'loop', 'charge'):
                         # ✅ Use next best (second-best) candidate if available
                         alt = next((c for c in candidates if c['r_id'] != r_id), None)
-                        if alt:
+                        if alt and task_name in ('transport', 'loop'):
                             chosen_r_id = alt['r_id']
                             robot_state = alt['robot_state']
 
@@ -280,58 +300,41 @@ class FmTaskHandler:
                                 "FmTaskHandler", "fm_send_task_request", "info")
                         else:
                             # No alternative available (could happen if we only had one robot)
-                            return self._queue_for_robot(
-                                f_id, r_id, from_loc_id, to_loc_id,
-                                task_name, task_priority, payload_kg)
-                    else:
-                        # move/charge → queue for the user robot
-                        return self._queue_for_robot(
-                            f_id, r_id, from_loc_id, to_loc_id,
-                            task_name, task_priority, payload_kg)
-            else:
-                # No user-specified robot
-                self.visualization_handler.terminal_log_visualization(
-                    f"Assigning to best fit: {chosen_r_id} "
-                    f"(fitness: {best['fitness']:.3f})",
-                    "FmTaskHandler", "fm_send_task_request", "info")
+                            # or its a charge task → queue for the user robot
+                            if not is_unassignedTask: # queue only if it has not been queued before.
+                                return self._queue_for_robot(
+                                    f_id, r_id, from_loc_id, to_loc_id,
+                                    task_name, task_priority, payload_kg)
+                            return False, None, [], [], [], [], []    
+                    else: # move task:
+                        self.visualization_handler.terminal_log_visualization(
+                            "Task choice unrecognized. Task cannot be queued.",
+                            "FmTaskHandler", "fm_send_task_request", "critical")
+                        return False, None, [], [], [], [], []     
         else:
             # --- Step 4: Handle no available robots ---
-            # Use first available known robot id, if any
-            fallback_r_id = next((rid for rid in all_r_ids if rid not in self.ignore_list), None)
-            if not fallback_r_id:
-                self.visualization_handler.terminal_log_visualization(
-                    "No valid robots found in fleet. Task cannot be queued.",
-                    "FmTaskHandler", "fm_send_task_request", "critical")
-                return False, None, [], [], [], [], []
-            return self._queue_for_robot(
-                f_id, fallback_r_id, from_loc_id, to_loc_id,
-                task_name, task_priority, payload_kg)
+            self.visualization_handler.terminal_log_visualization(
+                "No valid robots found in fleet. Task cannot be queued.",
+                "FmTaskHandler", "fm_send_task_request", "critical")
+            return False, None, [], [], [], [], []
 
         # --- Step 5: Log assignment ---
         msg = (f"[FUZZY ASSIGN] → {chosen_r_id} | Fitness: {best['fitness']:.3f} "
             f"| Travel: {best['travel_time']:.1f}s")
         self.visualization_handler.terminal_log_visualization(
-            msg, "FmTaskHandler", "fm_send_task_request", "critical"
+            msg, "FmTaskHandler", "fm_send_task_request", "info"
         )
 
         # --- Step 6: Finalize and file ---
         cleared, checkpoints, agv_itinerary, waitpoints, wait_itinerary, landmark = \
-            self._finalize_task(
+            self.fm_send_task(
                 f_id, chosen_r_id, from_loc_id, to_loc_id,
-                task_name, task_priority, task_dictionary,
-                override_cleared, payload_kg, robot_state
-            )
-
-        if checkpoints and cleared:
-            self.fm_file_task(
-                f_id, chosen_r_id, checkpoints, waitpoints,
-                agv_itinerary, wait_itinerary, landmark
+                task_name, task_priority, robot_state, 
+                task_dictionary, payload_kg 
             )
 
         return (cleared, chosen_r_id, checkpoints, agv_itinerary,
                 waitpoints, wait_itinerary, landmark)
-
-
 
     # ----------------------------------------------------------------------------
 
@@ -360,10 +363,6 @@ class FmTaskHandler:
 
             if not cleared:
                 continue
-
-            if task['type'] == 0 and payload_kg > max_payload:
-                print("6. ")
-                continue
                 
             dist_to_pickup = 0.0
             if last_node and from_loc_id:
@@ -386,7 +385,8 @@ class FmTaskHandler:
             result = self.fuzzy_dispatcher.evaluate_robot_for_task(task, r_state)
             print("result: ", result)
 
-            if result['fitness'] > 0.0:
+            fitness = result.get('fitness')
+            if fitness is not None and fitness > 0.0:
                 candidates.append({
                     'r_id': r_id,
                     'fitness': result['fitness'],
@@ -421,7 +421,8 @@ class FmTaskHandler:
     # ----------------------------------------------------------------------------
 
     def _finalize_task(self, f_id, r_id, from_loc_id, to_loc_id, task_name, task_priority,
-                       task_dictionary, override_cleared, payload_kg, robot_state):
+                       robot_state, task_dictionary, payload_kg):
+
         task_clear = True  # Already cleared in candidate phase
 
         checkpoints, landmark, agv_itinerary = self.build_task_itinerary(
@@ -838,9 +839,13 @@ class FmTaskHandler:
 
     def build_graph(self, task_dictionary):
         """Convert task dictionary graph to adjacency set format."""
+        td = task_dictionary or self.task_dictionary
+        if not td or "graph" not in td:
+            return {}
+            
         return {
             node: {tuple(neigh) for neigh in neighbors}
-            for node, neighbors in task_dictionary["graph"].items()
+            for node, neighbors in td["graph"].items()
         }
 
     # ----------------------------------------------------------------------------------------------------
@@ -908,8 +913,8 @@ class FmTaskHandler:
             landmark.extend([target] + others)
 
         elif task_name == 'move':
-            if loc_node_owner == to_loc_id:
-                return [], [], []
+            # if loc_node_owner == to_loc_id:
+            #     return [], [], []
 
             if to_loc_id not in home_dock_loc_ids:
                 self.visualization_handler.terminal_log_visualization(
@@ -989,7 +994,11 @@ class FmTaskHandler:
 
     def fm_get_itinerary(self, nodes, task_dictionary):
         """ General function to retrieve coordinates for given location IDs. """
-        d = {e["loc_id"]: e["coordinate"] for e in task_dictionary["itinerary"]}
+        td = task_dictionary or self.task_dictionary
+        if not td or "itinerary" not in td:
+            return []
+            
+        d = {e["loc_id"]: e["coordinate"] for e in td["itinerary"]}
         return [d[n] for n in nodes if n in d]
 
     # ----------------------------------------------------------------------------------------------------
@@ -1383,6 +1392,7 @@ if __name__ == "__main__":
 
     # Close the database connection
     conn.close()
+
 
 
 # #######################################################################

@@ -70,6 +70,11 @@ class OrderPublisher:
         # In-memory cache — keyed by serial_number, holds the tuple from db
         self.cache: dict = {}
 
+        # Track active roots published since launch: { root_id: serial_number }
+        self.active_order_tracking = {}
+        # Track robots that have published at least one order to ignore the first "reassurance" order
+        self.robots_seen = set()
+
     # --------------------------------------------------------------------------------------------
 
     def _get_logger(self, logger_name, output_log):
@@ -755,6 +760,19 @@ class OrderPublisher:
             # Update cache with inserted row
             if inserted_row:
                 self.cache[order_message["serialNumber"]] = inserted_row
+            
+            # Keep track of published orders since launch
+            o_id = order_message.get("orderId")
+            r_id = order_message.get("serialNumber")
+            if o_id and r_id and not o_id.startswith("unassigned_"):
+                # If this is the FIRST time we see this robot, we ignore the order (startup reassurance)
+                if r_id in self.robots_seen:
+                    root_id = o_id.split('_')[0]
+                    self.active_order_tracking[root_id] = r_id
+                else:
+                    self.robots_seen.add(r_id)
+                    self.logger.info("Robot %s -> Initial reassurance order ignored for active tracking.", r_id)
+
             # This logic can involve query for existing entries and deleting the oldest one
             # before inserting the new record if the limit is reached. example approach:
 
@@ -981,6 +999,8 @@ class OrderPublisher:
             # Update cache with updated row
             if updated_row:
                 self.cache[r_id] = updated_row
+                # Immediately remove from active tracking to prevent dashboard lag
+                self.active_order_tracking.pop(base_uuid, None)
 
             self.logger.info("Updated latest order_id to: %s.", new_order_id)
 
@@ -991,56 +1011,96 @@ class OrderPublisher:
             self.db_conn.rollback()
             return False
 
-    def fetch_active_and_unassigned_tasks(self, f_id, m_id):
+    def fetch_active_and_unassigned_tasks(self, f_id, m_id, task_type=None):
         """
         Fetch active tasks (ongoing orders for task types 'charge', 'loop', 'transport')
-        and unassigned tasks from the database.
-
-        Parameters:
-            f_id (str): Fleet ID.
-            m_id (str): Manufacturer ID.
-
-        Returns:
-            tuple: (list of active order_ids, list of unassigned tasks)
+        and unassigned tasks. Uses in-memory tracking of published root UUIDs.
+        If task_type is provided, filters the returned tasks.
         """
         try:
             cursor = self.db_conn.cursor()
 
-            # Fetch all orders and nodes
-            query = f"""
-                SELECT order_id, nodes
-                FROM {self.table_order}
-                WHERE zone_set_id = %s AND manufacturer = %s
-            """
-            cursor.execute(query, (f_id, m_id))
-            orders = cursor.fetchall()
+            # Check if any of our tracked active UUIDs have a _completed or _cancelled suffix appended
+            if self.active_order_tracking:
+                ids_to_check = []
+                for root in list(self.active_order_tracking.keys()):
+                    ids_to_check.extend([f"{root}_completed", f"{root}_cancelled"])
+                
+                placeholders = ','.join(['%s'] * len(ids_to_check))
+                query_check = f"SELECT order_id FROM {self.table_order} WHERE order_id IN ({placeholders})"
+                cursor.execute(query_check, tuple(ids_to_check))
+                finished_orders = cursor.fetchall()
+                
+                # If we find that they are complete, pop it from the active tracked
+                for (o_id,) in finished_orders:
+                    root = o_id.split('_')[0]
+                    self.active_order_tracking.pop(root, None)
+            
+            # Count distinct robots with currently active orders
+            active_robots = []
+            if not task_type:
+                active_robots = list(set(self.active_order_tracking.values()))
+            else:
+                active_r_ids = list(set(self.active_order_tracking.values()))
+                if active_r_ids:
+                    r_id_placeholders = ','.join(['%s'] * len(active_r_ids))
+                    query_active = f"""
+                        SELECT DISTINCT ON (serial_number) serial_number, nodes
+                        FROM {self.table_order}
+                        WHERE zone_set_id = %s AND manufacturer = %s AND serial_number IN ({r_id_placeholders})
+                        ORDER BY serial_number, timestamp DESC
+                    """
+                    params = [f_id, m_id] + active_r_ids
+                    cursor.execute(query_active, tuple(params))
+                    for r_id_db, nodes in cursor.fetchall():
+                        nodes_list = nodes if isinstance(nodes, list) else json.loads(str(nodes))
+                        match_found = False
+                        for node in nodes_list:
+                            if isinstance(node, dict):
+                                for action in node.get("actions", []):
+                                    if action.get("actionType") == "dock":
+                                        parameters = action.get("actionParameters", [{}])[0].get("value", [])
+                                        if len(parameters) > 2 and parameters[2] == task_type:
+                                            active_robots.append(r_id_db)
+                                            match_found = True
+                                            break
+                                if match_found: break
 
-            potential_active = set()
-            finished_roots = set()
-            unassigned_tasks = set()
+            # Fetch unassigned tasks separately (as they use a different naming convention)
+            unassigned_tasks = []
+            if not task_type:
+                query_unassigned = f"""
+                    SELECT order_id FROM {self.table_order}
+                    WHERE zone_set_id = %s AND manufacturer = %s AND order_id LIKE 'unassigned_%%'
+                """
+                cursor.execute(query_unassigned, (f_id, m_id))
+                unassigned_tasks = [row[0] for row in cursor.fetchall()]
+            else:
+                query_unassigned = f"""
+                    SELECT order_id, nodes FROM {self.table_order}
+                    WHERE zone_set_id = %s AND manufacturer = %s AND order_id LIKE 'unassigned_%%'
+                """
+                cursor.execute(query_unassigned, (f_id, m_id))
+                for u_id, nodes in cursor.fetchall():
+                    nodes_list = nodes if isinstance(nodes, list) else json.loads(str(nodes))
+                    match_found = False
+                    for node in nodes_list:
+                        if isinstance(node, dict):
+                            for action in node.get("actions", []):
+                                if action.get("actionType") == "dock":
+                                    parameters = action.get("actionParameters", [{}])[0].get("value", [])
+                                    if len(parameters) > 2 and parameters[2] == task_type:
+                                        unassigned_tasks.append(u_id)
+                                        match_found = True
+                                        break
+                            if match_found: break
 
-            for order_id, nodes in orders:
-                if order_id.startswith("unassigned_"):
-                    unassigned_tasks.add(order_id)
-                    continue
-
-                # The root ID is everything before the first underscore.
-                # uuid, uuid_1, and uuid_1_completed all share the same root.
-                root_id = order_id.split('_')[0]
-
-                if "_completed" in order_id or "_cancelled" in order_id:
-                    finished_roots.add(root_id)
-                else:
-                    potential_active.add(root_id)
-
-            # An order is truly active only if its root ID has NO finished version in the DB
-            active_tasks = potential_active - finished_roots
-
-            return list(active_tasks), list(unassigned_tasks)
+            return active_robots, unassigned_tasks
 
         except Exception as er:
             self.logger.error("fetch_active_and_unassigned_tasks Database Error: %s", er)
             return [], []
+
 
     def fetch_completed_tasks(self, f_id, m_id, cleared, task_type=None, r_id=None):
         """
@@ -1105,7 +1165,7 @@ class OrderPublisher:
                         if action.get("actionType") == "dock":
                             # Extract task details from action parameters
                             parameters = action.get("actionParameters", [{}])[0].get("value", [])
-                            if len(parameters) > 1 and parameters[1] == task_type:
+                            if len(parameters) > 2 and parameters[2] == task_type:
                                 matching_orders.append(order_id)
                                 break
 
