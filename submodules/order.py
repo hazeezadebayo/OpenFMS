@@ -70,12 +70,7 @@ class OrderPublisher:
         # In-memory cache — keyed by serial_number, holds the tuple from db
         self.cache: dict = {}
 
-        # Track active roots published since launch: { root_id: serial_number }
-        self.active_order_tracking = {}
-        # Track robots that have published at least one order to ignore the first "reassurance" order
-        self.robots_seen = set()
-
-    # --------------------------------------------------------------------------------------------
+        # We can implement a background loop to verify these if needed:--------------------------------------------------------------------------------------------
 
     def _get_logger(self, logger_name, output_log):
 
@@ -104,6 +99,7 @@ class OrderPublisher:
 
             # Show log file path
             # logger.info(f"Logs are written to: {log_file_path}")
+            pass
 
         return logger
 
@@ -114,20 +110,7 @@ class OrderPublisher:
         """
         Compute overall task throughput (tasks per minute) across all robots for each minute
         within the actual duration of the simulation.
-
-        - Overall throughput = (Total tasks completed in the window) / (window in minutes)
-        - If `show_plot=True`, generates a time-series plot of throughput over the active period.
         """
-
-        def calculate_throughput(start_time, end_time):
-            total_tasks = sum(
-                1 for tasks in self.analytics_data.values()
-                for task in tasks
-                if start_time <= task["completion_timestamp"] < end_time
-            )
-            return total_tasks
-
-        # Prepare to collect data for plotting
         timestamps = []
         throughput_values = []
 
@@ -136,32 +119,33 @@ class OrderPublisher:
         if not all_tasks:
             return timestamps, throughput_values
             
-        first_dispatch = min(task.get("dispatch_timestamp", time.time()) for task in all_tasks)
+        # Synchronize: use "issued_timestamp" which is recorded in record_order_issuance
+        first_dispatch = min(task.get("issued_timestamp", task["completion_timestamp"] - task.get("execution_duration", 0)) for task in all_tasks)
         last_completion = max(task.get("completion_timestamp", time.time()) for task in all_tasks)
         
-        actual_duration_seconds = max(last_completion - first_dispatch, 60.0)
+        # Calculate span in minutes
+        actual_duration_seconds = max(last_completion - first_dispatch, 1.0)
         actual_duration_minutes = max(int(actual_duration_seconds / 60) + 1, 1)
 
-        # compute window
-        current_time = last_completion
-        for minute in range(actual_duration_minutes):
-            start_time = current_time - (actual_duration_minutes - minute) * 60
-            end_time = start_time + 60
-
-            throughput = calculate_throughput(start_time, end_time)
-            timestamps.append(minute + 1)  # Using minute as label (1, 2, 3, ...)
-            throughput_values.append(throughput)
+        # Initialize bins for each minute
+        bins = [0] * actual_duration_minutes
+        for task in all_tasks:
+            # Determine which minute bucket this completion falls into
+            minute_idx = int((task["completion_timestamp"] - first_dispatch) / 60)
+            if 0 <= minute_idx < actual_duration_minutes:
+                bins[minute_idx] += 1
+        
+        timestamps = list(range(1, actual_duration_minutes + 1))
+        throughput_values = bins
 
         if show_plot:
-            # plt.xlabel("Time")
-            # plt.ylabel("Overall Throughput (tasks per minute)")
             self.terminal_bar_chart(
                 data=dict(zip(timestamps, throughput_values)),
                 xlabel="Minute",
                 title=f"Overall Throughput Over {actual_duration_minutes} Minutes"
             )
 
-        return timestamps, throughput_values # Return throughput values for each minute
+        return timestamps, throughput_values
 
 
     # ===================== Wait Analytics Methods =====================
@@ -323,7 +307,8 @@ class OrderPublisher:
         self.analytics_data[robot_id].append({
             "order_id": base_uuid,
             "execution_duration": execution_duration,
-            "completion_timestamp": completion_timestamp
+            "completion_timestamp": completion_timestamp,
+            "issued_timestamp": issued_timestamp
         })
 
         # update wait analytics
@@ -761,18 +746,7 @@ class OrderPublisher:
             if inserted_row:
                 self.cache[order_message["serialNumber"]] = inserted_row
             
-            # Keep track of published orders since launch
-            o_id = order_message.get("orderId")
-            r_id = order_message.get("serialNumber")
-            if o_id and r_id and not o_id.startswith("unassigned_"):
-                # If this is the FIRST time we see this robot, we ignore the order (startup reassurance)
-                if r_id in self.robots_seen:
-                    root_id = o_id.split('_')[0]
-                    self.active_order_tracking[root_id] = r_id
-                else:
-                    self.robots_seen.add(r_id)
-                    self.logger.info("Robot %s -> Initial reassurance order ignored for active tracking.", r_id)
-
+            # Tracking has been transitioned to fetch_active_and_unassigned_tasks dynamic querying
             # This logic can involve query for existing entries and deleting the oldest one
             # before inserting the new record if the limit is reached. example approach:
 
@@ -999,8 +973,6 @@ class OrderPublisher:
             # Update cache with updated row
             if updated_row:
                 self.cache[r_id] = updated_row
-                # Immediately remove from active tracking to prevent dashboard lag
-                self.active_order_tracking.pop(base_uuid, None)
 
             self.logger.info("Updated latest order_id to: %s.", new_order_id)
 
@@ -1013,58 +985,44 @@ class OrderPublisher:
 
     def fetch_active_and_unassigned_tasks(self, f_id, m_id, task_type=None):
         """
-        Fetch active tasks (ongoing orders for task types 'charge', 'loop', 'transport')
-        and unassigned tasks. Uses in-memory tracking of published root UUIDs.
+        Fetch active tasks (ongoing orders) and unassigned tasks.
+        Queries the database for the latest order per robot to determine active status.
         If task_type is provided, filters the returned tasks.
         """
         try:
             cursor = self.db_conn.cursor()
-
-            # Check if any of our tracked active UUIDs have a _completed or _cancelled suffix appended
-            if self.active_order_tracking:
-                ids_to_check = []
-                for root in list(self.active_order_tracking.keys()):
-                    ids_to_check.extend([f"{root}_completed", f"{root}_cancelled"])
-                
-                placeholders = ','.join(['%s'] * len(ids_to_check))
-                query_check = f"SELECT order_id FROM {self.table_order} WHERE order_id IN ({placeholders})"
-                cursor.execute(query_check, tuple(ids_to_check))
-                finished_orders = cursor.fetchall()
-                
-                # If we find that they are complete, pop it from the active tracked
-                for (o_id,) in finished_orders:
-                    root = o_id.split('_')[0]
-                    self.active_order_tracking.pop(root, None)
             
-            # Count distinct robots with currently active orders
+            # Fetch latest order for all robots matching f_id and m_id
+            query_latest = f"""
+                SELECT DISTINCT ON (serial_number) serial_number, order_id, nodes
+                FROM {self.table_order}
+                WHERE zone_set_id = %s AND manufacturer = %s AND order_id NOT LIKE 'unassigned_%%'
+                ORDER BY serial_number, timestamp DESC
+            """
+            cursor.execute(query_latest, (f_id, m_id))
+            latest_orders = cursor.fetchall()
+            
             active_robots = []
-            if not task_type:
-                active_robots = list(set(self.active_order_tracking.values()))
-            else:
-                active_r_ids = list(set(self.active_order_tracking.values()))
-                if active_r_ids:
-                    r_id_placeholders = ','.join(['%s'] * len(active_r_ids))
-                    query_active = f"""
-                        SELECT DISTINCT ON (serial_number) serial_number, nodes
-                        FROM {self.table_order}
-                        WHERE zone_set_id = %s AND manufacturer = %s AND serial_number IN ({r_id_placeholders})
-                        ORDER BY serial_number, timestamp DESC
-                    """
-                    params = [f_id, m_id] + active_r_ids
-                    cursor.execute(query_active, tuple(params))
-                    for r_id_db, nodes in cursor.fetchall():
-                        nodes_list = nodes if isinstance(nodes, list) else json.loads(str(nodes))
-                        match_found = False
-                        for node in nodes_list:
-                            if isinstance(node, dict):
-                                for action in node.get("actions", []):
-                                    if action.get("actionType") == "dock":
-                                        parameters = action.get("actionParameters", [{}])[0].get("value", [])
-                                        if len(parameters) > 2 and parameters[2] == task_type:
-                                            active_robots.append(r_id_db)
-                                            match_found = True
-                                            break
-                                if match_found: break
+            for r_id_db, o_id, nodes in latest_orders:
+                # Active orders are those that have NOT been completed or cancelled
+                if o_id.endswith("_completed") or o_id.endswith("_cancelled"):
+                    continue
+                
+                if not task_type:
+                    active_robots.append(r_id_db)
+                else:
+                    nodes_list = nodes if isinstance(nodes, list) else json.loads(str(nodes))
+                    match_found = False
+                    for node in nodes_list:
+                        if isinstance(node, dict):
+                            for action in node.get("actions", []):
+                                if action.get("actionType") == "dock":
+                                    parameters = action.get("actionParameters", [{}])[0].get("value", [])
+                                    if len(parameters) > 2 and parameters[2] == task_type:
+                                        active_robots.append(r_id_db)
+                                        match_found = True
+                                        break
+                            if match_found: break
 
             # Fetch unassigned tasks separately (as they use a different naming convention)
             unassigned_tasks = []
@@ -1286,8 +1244,7 @@ if __name__ == "__main__":
     # for robot, avg_time in avg_times.items():
     #    print(f"Robot ID: {robot}, Average Execution Duration: {avg_time:.2f} seconds")
 
-    timestamps, throughput_values = order_publisher.compute_overall_throughput(
-        duration_minutes=20, show_plot=True)
+    timestamps, throughput_values = order_publisher.compute_overall_throughput(show_plot=True)
     # Iterate through the timestamps and throughput values
     # for timestamp, throughput in zip(timestamps, throughput_values):
     #    print(f"timestamp [min]: {timestamp}, Throughput: {throughput:.2f}.")

@@ -46,6 +46,7 @@ class FmScheduleHandler():
         # This replaces the former robot-order-based sentinel (start_robot_id / iteration_count)
         # which was not safe for concurrent ThreadPool execution.
         self._last_interval_time = 0.0
+        self._robot_last_interval_times: Dict[str, float] = {}
         self._interval_seconds = 40.0  # seconds between periodic fleet-wide checks
 
         # ----------------------
@@ -146,7 +147,8 @@ class FmScheduleHandler():
 
         with self._sched_lock:
             now = time.time()
-            interval_elapsed = (now - self._last_interval_time) >= self._interval_seconds
+            last_robot_time = self._robot_last_interval_times.get(r_id, 0.0)
+            interval_elapsed = (now - last_robot_time) >= self._interval_seconds
 
         # ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
         # check if robot is task free
@@ -308,15 +310,10 @@ class FmScheduleHandler():
     def _handle_iteration_interval(self, f_id, r_id, m_id, v_id, is_free,
                                    bat_level, traffic_control, unassigned_tasks, last_node_id, 
                                    home_dock_loc_ids, charge_dock_loc_ids, station_dk_loc_ids, ctx):
-        # Advance the last_interval_time so subsequent robots in the same cycle
-        # do not also trigger the interval. Under a ThreadPool, only the first
-        # robot to enter the interval branch runs the periodic logic.
+        # Advance the per-robot interval time.
         with self._sched_lock:
             now = time.time()
-            if (now - self._last_interval_time) < self._interval_seconds:
-                # Another robot in the same parallel cohort just reset the clock;  skip.
-                return
-            self._last_interval_time = now
+            self._robot_last_interval_times[r_id] = now
 
         # this function belongs in traffic handler.
         # Verify robot's readiness for task assignment
@@ -826,24 +823,6 @@ class FmScheduleHandler():
             # find all existing snapshot files
             existing: List[str] = glob.glob(os.path.join(logs_dir, f"{base_name}_*.txt"))
             
-            # --- Enforce 8 file rolling buffer limit ---
-            MAX_SNAPSHOTS = 8
-            if len(existing) >= MAX_SNAPSHOTS:
-                # Sort existing files by modified time (oldest first)
-                existing.sort(key=os.path.getmtime)
-                # Determine how many files to delete so that adding 1 new file keeps the total at MAX_SNAPSHOTS
-                excess_count = (len(existing) - MAX_SNAPSHOTS) + 1
-                files_to_delete = [existing[i] for i in range(excess_count)]
-                for f_del in files_to_delete:
-                    try:
-                        os.remove(f_del)
-                        print(f"Removed old snapshot: {f_del}")
-                    except Exception as e:
-                        print(f"Failed to remove {f_del}: {e}")
-                
-                # Refresh existing list after deletion
-                existing = glob.glob(os.path.join(logs_dir, f"{base_name}_*.txt"))
-
             if existing:
                 # extract numeric suffixes and compute next index
                 indices = [
@@ -855,19 +834,32 @@ class FmScheduleHandler():
             else:
                 next_index = 1
 
-            filename = os.path.join(logs_dir, f"{base_name}_{next_index}.txt")
+            final_filename = os.path.join(logs_dir, f"{base_name}_{next_index}.txt")
+            temp_filename = os.path.join(logs_dir, f".temp_{base_name}_{next_index}.txt")
 
-            with open(filename, "w") as f:
+            # 1. Write everything into a temporary hidden file FIRST
+            with open(temp_filename, "w") as f:
                 for msg in log_messages:
                     f.write(msg + "\n")
             
-            # Ensure host user can delete this file without sudo
+            # 2. Ensure host user can delete this file without sudo
             try:
-                os.chmod(filename, 0o666)
+                os.chmod(temp_filename, 0o666)
             except OSError:
                 pass
 
-            print(f"✅ Results written to {filename}")
+            # 3. Atomically swap it to the final filename
+            os.rename(temp_filename, final_filename)
+
+            # 4. Remove all previous snapshot files to avoid clutter
+            for old_file in existing:
+                if old_file != final_filename:
+                    try:
+                        os.remove(old_file)
+                    except Exception:
+                        pass
+
+            print(f"✅ Results written to {final_filename}")
 
 
 # ────────────────────────────────────────────────

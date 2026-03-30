@@ -5,10 +5,10 @@
   manufacturer: birfen
   connection_state: ONLINE
   initial_position:
-  - 6.0
-  - 6.0
+  - 24.0
+  - 30.0
   - 0.0
-  bat_charge: 93.4
+  bat_charge: 59.7
   lin_velocity: 0.65
   ang_velocity: 0.15
 - fleetname: kullar
@@ -18,9 +18,9 @@
   manufacturer: birfen
   connection_state: ONLINE
   initial_position:
+  - 24.0
+  - 12.0
   - 0.0
-  - 0.0
-  - 0.0
-  bat_charge: 69.8
+  bat_charge: 76.3
   lin_velocity: 0.65
   ang_velocity: 0.15

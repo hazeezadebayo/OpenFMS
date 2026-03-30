@@ -252,30 +252,9 @@ The same random dock selection bug that was fixed in `handle_transport_or_loop_t
 
 **Fix:** Apply the same `loc_node_owner in home_dock_loc_ids` preference logic or track each robot's resident home dock.
 
-### R4 — `compute_overall_throughput` Loops Over 120 Minutes Unconditionally
-
-**Location:** `OrderPublisher.compute_overall_throughput()` (order.py:104–146)
-
-```python
-for minute in range(duration_minutes):     # duration_minutes = 120
-    start_time = current_time - (duration_minutes - minute) * 60
-    end_time = start_time + 60
-    throughput = calculate_throughput(start_time, end_time)
-```
-
-`calculate_throughput` itself iterates over **all tasks for all robots** for each minute bucket:
-
-```python
-total_tasks = sum(
-    1 for tasks in self.analytics_data.values()
-    for task in tasks
-    if start_time <= task["completion_timestamp"] < end_time
-)
-```
-
-This is O(120 × total_tasks). With 1,000 robots completing 10 tasks each over 2 hours, this is O(120 × 10,000) = 1.2M iterations every analytics call.
-
-**Fix:** Use a pre-sorted or bucketed structure. At analytics call time, sort completions once by timestamp, then use `bisect` to count completions per bucket in O(log N) rather than O(N) per bucket.
+### ✅ R4 — `compute_overall_throughput` Loops Over 120 Minutes Unconditionally (RESOLVED)
+**Location:** `OrderPublisher.compute_overall_throughput()` (order.py:108-146)
+**Status:** The O(120 × N) nested loop has been replaced with a linear O(N) binning algorithm. Completions are now bucketed into minute-indexed arrays in a single pass over the task list, drastically reducing the cost for large datasets.
 
 ### R5 — `find_nearest_node` Iterates Full Itinerary Including Waitpoints
 
@@ -298,10 +277,8 @@ This is O(120 × total_tasks). With 1,000 robots completing 10 tasks each over 2
 **Status:** Successfully integrated into the precise real-time dashboard. The fleet-wide dashboard explicitly provides an aggregate system-level perspective without convoluting per-robot expectations.
 
 ### ✅ A3 — `compute_overall_throughput` (RESOLVED)
-
 **What it measures:** Tasks completed per minute across the simulation window.
-
-**Status:** The codebase has been actively patched! It now correctly calculates `first_dispatch` and `last_completion` to define `actual_duration_seconds`, substituting the rigid 120-bucket limit. It now outputs useful per-minute task throughput aligned to the actual simulation duration.
+**Status:** Patched with a high-performance O(N) binning algorithm. It correctly calculates the simulation span from `issued_timestamp` to `last_completion`, ensuring Peak Throughput (PTP) is accurately reported regardless of simulation duration or sparse events.
 
 ### A4 — `compute_robot_avg_latency` ✅ Correct (MQTT latency)
 
