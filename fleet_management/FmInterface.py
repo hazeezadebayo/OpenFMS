@@ -204,7 +204,7 @@ if __name__ == "__main__":
             print(f"Details: {e}")
             sys.exit(1)
 
-        # 2. Categorize and prepare docks
+        # 2. Prepare remaining docks for task randomization
         itinerary = fm.task_dictionary.get('itinerary', [])
         station_docks = [n['loc_id'] for n in itinerary if n.get('description') == "station_dock"]
         charge_docks = [n['loc_id'] for n in itinerary if n.get('description') == "charge_dock"]
@@ -273,9 +273,11 @@ if __name__ == "__main__":
     fm.upload_all_maps(fm.fleetname)
     # fm.job_ids = fm.process_itinerary(fm.task_dictionary.get("itinerary", []), fm.fleetname)
     fm.serial_numbers = fm.schedule_handler.traffic_handler.task_handler.factsheet_handler.fetch_serial_numbers(fm.fleetname)
-
-    analytics_interval = 30  # seconds between dashboard snapshot updates
-    last_analytics_time = -analytics_interval  # fire immediately on first cycle
+    
+    # # Categorize docks for event monitoring (simulation completion and station arrivals)
+    # itinerary = fm.task_dictionary.get('itinerary', [])
+    # home_docks = {n['loc_id'] for n in itinerary if n.get('description') == "home_dock"}
+    # all_station_docks = {n['loc_id'] for n in itinerary if n.get('description') == "station_dock"}
 
     try:
         while True:
@@ -297,17 +299,10 @@ if __name__ == "__main__":
                     )
                     t["sent"] = True
 
-            # Periodically write analytics snapshot so the dashboard stays current.
-            if elapsed_time - last_analytics_time >= analytics_interval:
-                fm.schedule_handler.fm_analytics(
-                    f_id="kullar", m_id=fm.manufacturer,
-                    r_id=None, debug_level="info", write_to_file=True
-                )
-                last_analytics_time = elapsed_time
-
             time.sleep(1)
 
     except KeyboardInterrupt:
         print("\nSimulation stopped by user.")
-        fm.cleanup()
+    
+    fm.cleanup()
         

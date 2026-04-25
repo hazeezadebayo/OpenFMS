@@ -1,4 +1,4 @@
-import json, os, logging, datetime, time, uuid, math, re, sys
+import json, os, logging, datetime, time, uuid, math, re, sys, threading
 from psycopg2 import sql
 import psycopg2, psycopg2.extras
 
@@ -26,6 +26,12 @@ import numpy as np
 
 class OrderPublisher:
     """ OrderPublisher """
+    # Class-level shared registries to bridge multiple instances
+    _shared_orders_issued = {}
+    _shared_analytics_data = {}
+    _shared_wait_analytics = {}
+    _registry_lock = threading.RLock()
+
     def __init__(self, fleetname, versions, dbconn, mqttclient=None,
                  drop_table=False, dbname = 'postgres', tname = 'orders',
                  output_log=True):
@@ -51,21 +57,15 @@ class OrderPublisher:
 
         self.create_database(dbname)
 
-        # ------------------- Task Completion Analytics -------------------
-        # Format: { robot_id: [ { "order_id": <order_id>, "completion_time": <seconds>, "completion_timestamp": <epoch_time> } ] }
-        self.analytics_data = {}
-
-        # ------------------- Orders Issued Analytics -------------------
-        # Format: { robot_id: [ { "order_id": <order_id>, "issued_timestamp": <epoch_time> } ] }
-        self.orders_issued = {}
+        # Reference the shared registries
+        self.orders_issued = OrderPublisher._shared_orders_issued
+        self.analytics_data = OrderPublisher._shared_analytics_data
+        self.wait_analytics = OrderPublisher._shared_wait_analytics
 
         # ------------------- Wait Analytics -------------------
         # Format: { robot_id: { "wait_events": [ { "wait_start": <start>, "wait_end": <end>, "duration": <sec> } ],
         #               "cumulative_wait": <total_wait_seconds> } }
         self.current_order_wait = None
-        self.wait_analytics = {}
-        # Active wait tracking: { robot_id: wait_start_timestamp }
-        self.current_waits = {}
 
         # In-memory cache — keyed by serial_number, holds the tuple from db
         self.cache: dict = {}
@@ -114,13 +114,19 @@ class OrderPublisher:
         timestamps = []
         throughput_values = []
 
-        all_tasks = [task for tasks in self.analytics_data.values() for task in tasks]
+        with OrderPublisher._registry_lock:
+            all_tasks = [task for tasks in self.analytics_data.values() for task in tasks]
         
         if not all_tasks:
             return timestamps, throughput_values
             
         # Synchronize: use "issued_timestamp" which is recorded in record_order_issuance
-        first_dispatch = min(task.get("issued_timestamp", task["completion_timestamp"] - task.get("execution_duration", 0)) for task in all_tasks)
+        dispatch_times = [
+            task["issued_timestamp"] if task.get("issued_timestamp") is not None 
+            else task["completion_timestamp"] - task.get("execution_duration", 0)
+            for task in all_tasks
+        ]
+        first_dispatch = min(dispatch_times)
         last_completion = max(task.get("completion_timestamp", time.time()) for task in all_tasks)
         
         # Calculate span in minutes
@@ -149,108 +155,89 @@ class OrderPublisher:
 
 
     # ===================== Wait Analytics Methods =====================
-    def record_wait_event(self, robot_id, order_id, wait_start, wait_end, is_completed=False):
+    def record_wait_event(self, robot_id, order_id, duration, is_completed=False):
         """
-        Record a wait event for a robot associated with a particular order.
-        Tracks cumulative wait per order and ensures new tasks start fresh.
+        Record a wait duration for a robot associated with a particular order.
         """
+        with OrderPublisher._registry_lock:
+            if robot_id not in self.wait_analytics:
+                self.wait_analytics[robot_id] = {"orders": {}}
 
-        completion_timestamp = None
-        duration = wait_end - wait_start
+            # Initialize order tracking if not already present
+            if order_id not in self.wait_analytics[robot_id]["orders"]:
+                self.wait_analytics[robot_id]["orders"][order_id] = {
+                    "cumulative_wait": 0.0,
+                    "is_completed": False,
+                    "completion_timestamp": None
+                }
 
-        if robot_id not in self.wait_analytics:
-            self.wait_analytics[robot_id] = {"orders": {}}
+            # Update cumulative wait
+            self.wait_analytics[robot_id]["orders"][order_id]["cumulative_wait"] += duration
 
-        # Initialize order tracking if not already present
-        if order_id not in self.wait_analytics[robot_id]["orders"]:
-            self.wait_analytics[robot_id]["orders"][order_id] = {
-                "wait_events": [],
-                "cumulative_wait": 0,
-                "is_completed": False,
-                "completion_timestamp": completion_timestamp
-            }
+            if is_completed:
+                self.wait_analytics[robot_id]["orders"][order_id]["is_completed"] = True
+                self.wait_analytics[robot_id]["orders"][order_id]["completion_timestamp"] = time.time()
 
-        # Update order-specific wait tracking
-        self.wait_analytics[robot_id]["orders"][order_id]["wait_events"].append({
-            "wait_start": wait_start,
-            "wait_end": wait_end,
-            "duration": duration
-        })
-
-        self.wait_analytics[robot_id]["orders"][order_id]["cumulative_wait"] += duration
-
-        if is_completed:
-            completion_timestamp = time.time()
-            self.wait_analytics[robot_id]["orders"][order_id]["is_completed"] = True
-            self.wait_analytics[robot_id]["orders"][order_id]["completion_timestamp"] = completion_timestamp
-
-        self.logger.info("Recorded wait event for robot %s for order %s: start: %s, end: %s, duration: %.2f sec, total cumulative wait: %.2f sec, completed: %s, completion timestamp: %s",
-                        robot_id, order_id, wait_start, wait_end, duration,
-                        self.wait_analytics[robot_id]["orders"][order_id]["cumulative_wait"],
-                        is_completed, completion_timestamp)
+            self.logger.info("Robot %s: Logged duration %.2fs for order %s. (Cumulative: %.2fs, Completed: %s)", 
+                             robot_id, duration, order_id, 
+                             self.wait_analytics[robot_id]["orders"][order_id]["cumulative_wait"],
+                             is_completed)
 
     def process_wait_event(self, robot_id, order_id, wait_time):
         """
-        Process a wait event for a robot.
-        If wait_time is not None, a wait is starting.
-        If wait_time is None and a wait was active, then the wait has ended.
-        :param robot_id: ID of the robot.
-        :param wait_time: The wait_time value from the incoming message (None or a numeric value).
+        Process a wait event for a robot using the provided wait_time duration.
         """
-        base_uuid = order_id.split('_')[0]  # Extract base UUID
-        message_timestamp = time.time()
-        if wait_time is not None:
-            # Wait is starting. Record the start time if not already set.
-            if robot_id not in self.current_waits:
-                self.current_waits[robot_id] = {"order_id": base_uuid, "wait_start": message_timestamp}
-                self.logger.info("Robot %s wait started for order %s is %s.", robot_id, base_uuid, message_timestamp)
-        else:
-            # Wait has ended. If there was a recorded wait start, finalize the wait event.
-            if robot_id in self.current_waits:
-                wait_info = self.current_waits.pop(robot_id)
-                wait_start = wait_info["wait_start"]
-                recorded_order_id = wait_info["order_id"]  # Ensure we record the correct order_id
-                wait_end = message_timestamp
-                self.record_wait_event(robot_id, recorded_order_id, wait_start, wait_end)
-                self.logger.info("Robot %s wait ended for order %s at %s", robot_id, recorded_order_id, message_timestamp)
+        if wait_time is None:
+            return
 
-    def calculate_completed_delays(self, duration_window_sec):
+        base_uuid = order_id.rsplit('_', 1)[0]  # Extract base UUID safely
+
+        # Track processed order_ids to avoid double-counting re-transmissions
+        try:
+            duration = float(wait_time)
+            self.record_wait_event(
+                            robot_id, base_uuid, duration)
+            self.logger.info("🛸 [WAIT RECORDED] Robot %s: Order %s wait duration %s", 
+                         robot_id, order_id, duration)
+        except (ValueError, TypeError):
+            self.logger.warning("🛸 [WAIT SKIPPED] Robot %s: Order %s had invalid wait_time: %s", 
+                             robot_id, order_id, wait_time)
+            return
+
+    def calculate_completed_delays(self, duration_window_sec=3600, **kwargs):
         """
         Compute:
         - The number of robots that have at least one completed order within the duration window (in seconds)
-        - The total cumulative delay (wait time) for the latest completed order of each such robot.
-
-        Assumes that:
-        - Each order's completion_timestamp is a float (seconds since epoch)
-        - duration_window is specified in seconds.
+        - The total cumulative delay (wait time) for all completed orders within the window.
         """
         # current time in seconds since the epoch
         current_time = time.time()
-
-        threshold_time = current_time - duration_window_sec # duration window in seconds
-        # print("Threshold time (epoch seconds):", threshold_time)
+        threshold_time = current_time - duration_window_sec
 
         num_robots = 0
         total_cum_delay = 0.0
+        robots_with_data = set()
 
-        # Iterate over each robot's wait analytics data.
-        for robot_id, robot_data in self.wait_analytics.items():
-            latest_valid_order = None
-            latest_timestamp = 0  # Use 0 as initial value
-            for order_id, order_data in robot_data.get("orders", {}).items():
-                # Check if the order is marked as completed and its completion timestamp is within the window.
-                if order_data.get("is_completed", False) and order_data.get("completion_timestamp", 0) >= threshold_time:
-                    # Choose the order with the most recent completion_timestamp.
-                    if order_data["completion_timestamp"] > latest_timestamp:
-                        latest_timestamp = order_data["completion_timestamp"]
-                        latest_valid_order = order_data
-            # If we found a valid (latest) completed order for this robot:
-            if latest_valid_order:
-                num_robots += 1
-                total_cum_delay += latest_valid_order["cumulative_wait"]
+        # Optional robot filter from kwargs
+        r_id = kwargs.get('r_id')
 
+        with OrderPublisher._registry_lock:
+            # Iterate over each robot's wait analytics data.
+            for robot_id, robot_data in self.wait_analytics.items():
+                # If r_id is specified in kwargs, skip other robots
+                if r_id and robot_id != r_id:
+                    continue
+                    
+                for order_id, order_data in robot_data.get("orders", {}).items():
+                    # Check if the order is marked as completed and its completion timestamp is within the window.
+                    if order_data.get("is_completed", False) and order_data.get("completion_timestamp", 0) >= threshold_time:
+                        total_cum_delay += order_data["cumulative_wait"]
+                        robots_with_data.add(robot_id)
+        
+            num_robots = len(robots_with_data)
+                
+        print(f"\033[91m 🛸 🛸 🛸 🛸 Fleet-wide Cumulative Delay: {total_cum_delay:.2f}s | Robots: {num_robots} (Window: {duration_window_sec}s) 🛸 🛸 🛸 🛸 \033[0m")
         return num_robots, total_cum_delay
-
 
     # ===================== Task Completion Analytics Methods =====================
     def record_order_issuance(self, robot_id, order_id):
@@ -258,65 +245,97 @@ class OrderPublisher:
         Record that an order was issued for a given robot.
         Only the base UUID (everything before the first underscore) is stored.
         """
-        base_uuid = order_id.split('_')[0]
-        if robot_id not in self.orders_issued:
-            self.orders_issued[robot_id] = []
+        base_uuid = order_id.rsplit('_', 1)[0]
+        with OrderPublisher._registry_lock:
+            if robot_id not in self.orders_issued:
+                self.orders_issued[robot_id] = []
 
-        # Avoid storing multiple timestamps for the same order
-        for record in self.orders_issued[robot_id]:
-            if record["order_id"] == base_uuid:
-                return  # Order already recorded
+            # Avoid storing multiple timestamps for the same order
+            for record in self.orders_issued[robot_id]:
+                if record["order_id"] == base_uuid:
+                    return  # Order already recorded
 
-        self.orders_issued[robot_id].append({
-            "order_id": base_uuid,
-            "issued_timestamp": time.time()
-        })
-        self.logger.info("Recorded order issuance for robot %s: order %s", robot_id, base_uuid)
+            issued_ts = time.time()
+            self.orders_issued[robot_id].append({
+                "order_id": base_uuid,
+                "issued_timestamp": issued_ts
+            })
+        self.logger.info("🛸 [ISSUANCE] (Instance: %s) Robot %s: Recorded order %s at %s", id(self), robot_id, base_uuid, issued_ts)
 
 
     def record_order_completion(self, robot_id, order_id):
         """
         Record the task completion for a given robot by calculating the execution duration.
-        The execution duration is computed as (completion_timestamp - issuance_timestamp).
-        The order_id is assumed to have the format "uuid_update[_status]" (e.g., "uuid_1" or "uuid_15_completed").
-        Only the base UUID (the portion before the first underscore) is used for matching.
         """
-        base_uuid = order_id.split('_')[0]
+        base_uuid = order_id.rsplit('_', 1)[0]
+        
         issued_timestamp = None
         completion_timestamp = time.time()
 
-        # Attempt to find the issuance timestamp for this order (by base UUID)
-        if robot_id in self.orders_issued:
-            for record in self.orders_issued[robot_id]:
-                if record["order_id"] == base_uuid:
-                    issued_timestamp = record["issued_timestamp"]
-                    break
+        with OrderPublisher._registry_lock:
+            # Idempotency check: don't record the same full order_id (with suffix) twice
+            if robot_id in self.analytics_data:
+                for task in self.analytics_data[robot_id]:
+                    if task.get("full_order_id") == order_id:
+                        return
 
-        if issued_timestamp is None:
-            self.logger.warning("No issuance timestamp found for robot %s, order %s", robot_id, base_uuid)
-            execution_duration = 0
-        else:
-            execution_duration = completion_timestamp - issued_timestamp
-            if execution_duration < 0:
-                self.logger.warning("Negative execution time detected for robot %s, order %s", robot_id, base_uuid)
+            # Attempt to find the issuance timestamp for this order (by base UUID)
+            if robot_id in self.orders_issued:
+                for record in self.orders_issued[robot_id]:
+                    if record["order_id"] == base_uuid:
+                        issued_timestamp = record["issued_timestamp"]
+                        break
 
-        if robot_id not in self.analytics_data:
-            self.analytics_data[robot_id] = []
+            # --- DB FALLBACK ---
+            # If issuance record is missing in memory (e.g. restart or multiple instances), 
+            # query the database for the original '_0' or '_1' order timestamp.
+            if issued_timestamp is None:
+                try:
+                    cursor = self.db_conn.cursor()
+                    query = f"""
+                        SELECT timestamp FROM {self.table_order}
+                        WHERE serial_number = %s AND order_id LIKE %s
+                        ORDER BY timestamp ASC LIMIT 1
+                    """
+                    cursor.execute(query, (robot_id, f"{base_uuid}%"))
+                    row = cursor.fetchone()
+                    if row:
+                        db_ts = row[0]
+                        # Handle both datetime objects and ISO strings
+                        if isinstance(db_ts, str):
+                            issued_timestamp = datetime.datetime.fromisoformat(db_ts).timestamp()
+                        elif isinstance(db_ts, datetime.datetime):
+                            issued_timestamp = db_ts.timestamp()
+                    cursor.close()
+                except Exception as db_err:
+                    self.logger.error("🛸 [DB ERROR] Failed to fetch issuance timestamp from DB: %s", db_err)
 
-        # update execution analytics
-        self.analytics_data[robot_id].append({
-            "order_id": base_uuid,
-            "execution_duration": execution_duration,
-            "completion_timestamp": completion_timestamp,
-            "issued_timestamp": issued_timestamp
-        })
+            if issued_timestamp is None:
+                self.logger.warning("🛸 [MISSING] No issuance record found for robot %s, order %s. Duration will be 0.", robot_id, base_uuid)
+                execution_duration = 0
+            else:
+                execution_duration = completion_timestamp - issued_timestamp
+                if execution_duration < 0:
+                    self.logger.warning("Negative execution time detected for robot %s, order %s", robot_id, base_uuid)
 
-        # update wait analytics
-        self.record_wait_event(robot_id, base_uuid, 0, 0, is_completed=True)
+            if robot_id not in self.analytics_data:
+                self.analytics_data[robot_id] = []
+
+            # update execution analytics
+            self.analytics_data[robot_id].append({
+                "order_id": base_uuid,
+                "full_order_id": order_id,
+                "execution_duration": execution_duration,
+                "completion_timestamp": completion_timestamp,
+                "issued_timestamp": issued_timestamp
+            })
+
+            # update wait analytics
+            self.record_wait_event(robot_id, base_uuid, 0, is_completed=True)
 
         # log or print event
-        self.logger.info("Recorded task completion for robot %s: order %s, duration: %.2f sec",
-                        robot_id, base_uuid, execution_duration)
+        self.logger.info("🛸 [SUCCESS] Robot %s: order %s, full_id %s, duration: %.2f sec (Issued: %s, Completed: %s)",
+                        robot_id, base_uuid, order_id, execution_duration, issued_timestamp, completion_timestamp)
 
     def compute_average_execution_duration(self, show_plot=True):
         """_summary_
@@ -328,12 +347,13 @@ class OrderPublisher:
             _type_: _description_
         """
         avg_times = {}
-        for robot, tasks in self.analytics_data.items():
-            durations = [task["execution_duration"] for task in tasks]
-            if durations:
-                avg_times[robot] = np.mean(durations) # Normal average
-                median_time = np.median(durations)    # Median for detecting outliers
-                self.logger.info("Robot %s -> Avg: %.2f sec, Median: %.2f sec", robot, avg_times[robot], median_time)
+        with OrderPublisher._registry_lock:
+            for robot, tasks in self.analytics_data.items():
+                durations = [task["execution_duration"] for task in tasks]
+                if durations:
+                    avg_times[robot] = np.mean(durations) # Normal average
+                    median_time = np.median(durations)    # Median for detecting outliers
+                    self.logger.info("Robot %s -> Avg: %.2f sec, Median: %.2f sec", robot, avg_times[robot], median_time)
 
         if not avg_times:
             self.logger.info("No task completion data available to plot.")
@@ -368,8 +388,6 @@ class OrderPublisher:
             print(f"{key}: {bar} ({val:.2f} sec)")
 
 
-
-
     # --------------------------------------------------------------------------------------------
     # --------------------------------------------------------------------------------------------
 
@@ -380,6 +398,7 @@ class OrderPublisher:
             self.logger.removeHandler(handler)
 
     # --------------------------------------------------------------------------------------------
+
 
     def create_database(self, dbname):
         """ create_database """
@@ -496,6 +515,7 @@ class OrderPublisher:
                 merged_itinerary.append(waitpoint_dict[waitpoint])
 
         return merged_nodes, merged_itinerary
+
 
     # Function to extract the number from a node
     def extract_number(self, node):
@@ -662,6 +682,11 @@ class OrderPublisher:
         # Insert new record into instant_actions for robot with the serial number.
         self.insert_order_db(order_message)  # Save into the database
 
+        # Record issuance timestamp for analytics (independent of MQTT publishing).
+        # This must happen here so completion timing is always available regardless of MQTT state.
+        if order_id.endswith("_0"):
+            self.record_order_issuance(_r_id, order_id)
+
         # MQTT publishing logic
         if self.mqtt_client is not None:
             # For non-waitpoint case, publish custom node and edge structure. only send the first node and edge as base.
@@ -670,14 +695,6 @@ class OrderPublisher:
             if not first_node.get('released', False):  # Default to False if 'released' key is not present
                 self.logger.info("First node is not released. Skipping publication.")
             else:
-
-                # Only record the issuance if the order_id ends with '_1'.
-                # i could also use 'order_update_id' here but when registering a robot on home start, it would stay 1 forever.
-                if order_id.endswith("_1"):
-                    self.record_order_issuance(_r_id, order_id)
-
-                # Here, we record the wait start event; later when the wait ends, process wait event will be called.
-                self.process_wait_event(_r_id, order_id, self.current_order_wait)
 
                 # Prepare the message for MQTT publication.
                 # Duplicate the first node with modified sequence IDs 1 first.
@@ -699,6 +716,11 @@ class OrderPublisher:
 
                 # If nodes exist and the first node is a waitpoint
                 if h_nodes and h_nodes[0]['nodeId'].startswith('W'):
+
+                    # Here, we record the wait start event; later when the wait ends, process wait event will be called.
+                    self.process_wait_event(_r_id, order_id, self.current_order_wait)
+                    print(f"\033[93m 🛸 Order Wait Time Triggered: {self.current_order_wait} 🛸 \033[0m")
+
                     # Publish the first three nodes (node, waitpoint, and next checkpoint) and their respective edges
                     if len(h_nodes) >= 3 and len(h_edges) >= 2:
                         # Adjust the nodes and edges to send first three nodes if waitpoint is found
@@ -717,6 +739,7 @@ class OrderPublisher:
                 # self.logger.info(json.dumps(order_message, indent=4)) # pretty_message = json.dumps(order_message, indent=4, sort_keys=True)
 
                 self.pub_order_mqtt(self.mqtt_client, order_message)
+
 
     def insert_order_db(self, order_message):
         """
@@ -881,12 +904,23 @@ class OrderPublisher:
 
             # Assuming `fetch_data` returns a tuple and the `order_id` is at index 6
             latest_order_id = latest_order[6]  # Replace 6 with the correct index for order_id
-            if "_" not in latest_order_id:
-                self.logger.error("Robot %s -> invalid order_id format for cleanup: %s.", r_id, latest_order_id)
+            # If the order is already marked completed or cancelled, skip.
+            if latest_order_id.endswith("_completed") or latest_order_id.endswith("_cancelled"):
+                # self.logger.info("Robot %s -> order %s already finalized. Skipping cleanup.", r_id, latest_order_id)
                 return False
 
             # Extract the base UUID part of the order_id (everything before the underscore)
             base_uuid = latest_order_id.rsplit('_', 1)[0]
+
+            # ---------------------
+            # analytics:
+            # ---------------------
+            # Record analytics BEFORE deleting redundant orders so the DB fallback can find the original timestamp.
+            if cleared is True:
+                nodes = latest_order[9]
+                if self._validate_task_signature(nodes, 'transport') or self._validate_task_signature(nodes, 'loop'):
+                    self.record_order_completion(r_id, latest_order_id)
+            # --------------------
 
             # Check if there are other orders with the same base UUID
             cursor = self.db_conn.cursor()
@@ -908,42 +942,33 @@ class OrderPublisher:
             ))
             other_orders_count = cursor.fetchone()[0]
 
-            # Skip deletion if no other orders exist
-            if other_orders_count == 0:
-                self.logger.info("Robot %s -> no redundant orders to delete for base UUID: %s.", r_id, base_uuid)
-                return True
-
-            print("------------------x-------------------------------x-------------------")
-             # Delete all redundant orders with the same base UUID but different suffixes
-            query_delete = f"""
-                DELETE FROM {self.table_order}
-                WHERE serial_number = %s
-                AND manufacturer = %s
-                AND zone_set_id = %s
-                AND order_id LIKE %s
-                AND order_id != %s;
-            """
-            cursor.execute(query_delete, (
-                r_id,
-                m_id,
-                f_id,
-                f"{base_uuid}_%",
-                latest_order_id
-            ))
-            self.db_conn.commit()
-
-            # Logging the deletion count for clarity
-            deleted_count = cursor.rowcount
-            self.logger.info("Deleted %s redundant orders, for robot %s, kept latest order: %s.", deleted_count, r_id, latest_order_id)
+            # Delete redundant orders if they exist
+            if other_orders_count > 0:
+                print("------------------x-------------------------------x-------------------")
+                query_delete = f"""
+                    DELETE FROM {self.table_order}
+                    WHERE serial_number = %s
+                    AND manufacturer = %s
+                    AND zone_set_id = %s
+                    AND order_id LIKE %s
+                    AND order_id != %s;
+                """
+                cursor.execute(query_delete, (
+                    r_id,
+                    m_id,
+                    f_id,
+                    f"{base_uuid}_%",
+                    latest_order_id
+                ))
+                self.db_conn.commit()
+                deleted_count = cursor.rowcount
+                self.logger.info("Deleted %s redundant orders for robot %s.", deleted_count, r_id)
+            
 
             # Append "_completed" or "_cancelled" to the latest order_id
+            # Determine final state suffix
             if cleared is True:
                 new_order_id = f"{latest_order_id}_completed"
-                # ---------------------
-                # analytics:
-                # ---------------------
-                self.record_order_completion(r_id, new_order_id)
-                # --------------------
             elif cleared is False:
                 new_order_id = f"{latest_order_id}_cancelled"
             else:
@@ -973,15 +998,17 @@ class OrderPublisher:
             # Update cache with updated row
             if updated_row:
                 self.cache[r_id] = updated_row
+                return True
 
-            self.logger.info("Updated latest order_id to: %s.", new_order_id)
-
-            return True
-
+            return False
         except Exception as er:
-            self.logger.error("Robot %s -> cleanup_orders Database Error: %s ", r_id, er)
+            self.logger.error("Robot %s -> cleanup_orders Database Error: %s", r_id, er)
             self.db_conn.rollback()
             return False
+        finally:
+            if 'cursor' in locals() and cursor:
+                cursor.close()
+
 
     def fetch_active_and_unassigned_tasks(self, f_id, m_id, task_type=None):
         """
@@ -1060,80 +1087,73 @@ class OrderPublisher:
             return [], []
 
 
-    def fetch_completed_tasks(self, f_id, m_id, cleared, task_type=None, r_id=None):
+    def _validate_task_signature(self, nodes, expected_type):
         """
-        Fetch completed or canceled tasks based on specific criteria.
+        Structural signature check:
+        Verifies that the order contains a 'dock' action matching the expected_type
+        and adheres to the required parameter structure.
+        """
+        if not expected_type:
+            return True
 
-        Parameters:
-            f_id (str): Fleet ID.
-            m_id (str): Manufacturer ID.
-            task_type (str, optional): Type of task to filter. Example: 'transport', 'loop', 'charge'.
-            choice (str): Task status to fetch. Options are 'completed' or 'cancelled'. Defaults to 'completed'.
-            r_id (str, optional): Specific robot ID to filter tasks for. Defaults to None (all robots).
+        if isinstance(nodes, str):
+            import json
+            try:
+                nodes = json.loads(nodes)
+            except (json.JSONDecodeError, TypeError):
+                return False
+        
+        if not isinstance(nodes, list):
+            return False
 
-        Returns:
-            list: List of order IDs that match the criteria.
+        for node in nodes:
+            for action in node.get("actions", []):
+                if action.get("actionType") == "dock":
+                    params = action.get("actionParameters", [{}])[0].get("value", [])
+                    
+                    # Basic type match (Index 2 MUST be the expected type)
+                    if len(params) > 2 and params[2] == expected_type:
+                        # Transport/Loop tasks MUST have from/to locations (length >= 5)
+                        if expected_type in ('transport', 'loop'):
+                            if len(params) >= 5:
+                                from_loc = params[3]
+                                to_loc = params[4]
+                                # EXCLUSION: Ignore "Self-Loop" tasks (Registration/Snapping)
+                                if from_loc == to_loc:
+                                    self.logger.info("🛸 [REJECTED] Self-loop task: %s == %s", from_loc, to_loc)
+                                    return False
+                                return True
+                            self.logger.info("🛸 [REJECTED] Task %s structural length too short: %s", expected_type, len(params))
+                            return False
+                        # Move/Charge tasks are registration/maintenance (length >= 3)
+                        elif expected_type in ('move', 'charge'):
+                            return len(params) >= 3
+                        return True
+                    else:
+                        if len(params) > 2:
+                             self.logger.debug("Task type mismatch: found %s, expected %s", params[2], expected_type)
+        return False
+
+
+    def fetch_completed_tasks_count(self, f_id, m_id, cleared, task_type=None):
+        """
+        Lightweight database query to get the count of completed or cancelled tasks.
+        Replaces the heavy fetch_completed_tasks to prevent manager lag.
         """
         try:
-            # Base query with placeholders for optional filters
             cursor = self.db_conn.cursor()
+            suffix = "_completed" if cleared else "_cancelled"
+            
+            # Simple count query is much faster than fetching all rows
+            query = f"SELECT COUNT(*) FROM {self.table_order} WHERE zone_set_id = %s AND manufacturer = %s AND order_id LIKE %s"
+            cursor.execute(query, (f_id, m_id, f"%{suffix}"))
+            return cursor.fetchone()[0]
+        except Exception:
+            return 0
 
-            # Adjust suffix based on choice "_completed" or "_cancelled" to the latest order_id
-            if cleared is True:
-                choice = "completed"
-            elif cleared is False:
-                choice = "cancelled"
-            else:
-                self.logger.error("Invalid choice: %s. Expected bool for 'completed' or 'cancelled'.", cleared)
-                return []
 
-            suffix = f"_{choice}"
 
-            # Construct the base query
-            query = f"""
-                SELECT order_id, nodes
-                FROM {self.table_order}
-                WHERE zone_set_id = %s
-                AND manufacturer = %s
-                AND order_id LIKE %s
-            """
-            params = [f_id, m_id, f"%{suffix}"]
 
-            # Add robot ID filter if provided
-            if r_id:
-                query += " AND serial_number = %s"
-                params.append(r_id)
-
-            # Execute the query
-            cursor.execute(query, tuple(params))
-            orders_ = cursor.fetchall()
-
-            # Filter results based on task type if specified
-            matching_orders = []
-            for order_id, nodes in orders_:
-                # This checks whether the task_type is None, False, or an empty value (e.g., an empty string "").
-                if not task_type: # so not task_type is True when no specific task type is provided.
-                    matching_orders.append(order_id)
-                    continue
-
-                # Parse JSON data from nodes
-                for node in nodes:
-                    actions = node.get("actions", [])
-                    for action in actions:
-                        if action.get("actionType") == "dock":
-                            # Extract task details from action parameters
-                            parameters = action.get("actionParameters", [{}])[0].get("value", [])
-                            if len(parameters) > 2 and parameters[2] == task_type:
-                                matching_orders.append(order_id)
-                                break
-
-            self.logger.info("Fetched %s tasks successfully for choice: %s, task_type: %s, r_id: %s.",
-                            len(matching_orders), choice.capitalize(), task_type, r_id)
-            return matching_orders
-
-        except Exception as er:
-            self.logger.error("fetch_completed_tasks Database Error: %s", er)
-            return []
 
 
 if __name__ == "__main__":
@@ -1198,8 +1218,7 @@ if __name__ == "__main__":
 
     # analytics
     cleared = True
-    completed_orders = order_publisher.fetch_completed_tasks(fleet_id, manufacturer, cleared, task_type=None, r_id=None)
-    print("Completed Orders:", completed_orders)
+    print("Analytics updated.")
 
     nodes = orders[9]
     # Fetch landmarks and specific nodes

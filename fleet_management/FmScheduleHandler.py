@@ -45,9 +45,8 @@ class FmScheduleHandler():
         # regardless of how many robots are being managed or what order they run in.
         # This replaces the former robot-order-based sentinel (start_robot_id / iteration_count)
         # which was not safe for concurrent ThreadPool execution.
-        self._last_interval_time = 0.0
-        self._robot_last_interval_times: Dict[str, float] = {}
-        self._interval_seconds = 40.0  # seconds between periodic fleet-wide checks
+        self._robot_iteration_counts: Dict[str, int] = {}
+        self._iteration_skip_count = 3 # number of iterations to skip between periodic fleet-wide checks
 
         # ----------------------
         # Idle Time Tracking
@@ -60,7 +59,9 @@ class FmScheduleHandler():
 
         # Lock protecting shared counters that may be mutated concurrently
         # when manage_robot is called from a ThreadPoolExecutor.
-        self._sched_lock = threading.Lock()
+        self._sched_lock = threading.RLock()
+        self._last_event_nodes = {}
+        self._last_all_home_reported = False
 
 
     # ===================== idle Analytics =====================
@@ -75,7 +76,6 @@ class FmScheduleHandler():
           * If already idle, accumulate the difference (current_time - last recorded start_time)
             into the cumulative idle_time, then update start_time.
         - If the robot's last_node_id is not in home_dock_ids, then reset start_time (stop tracking).
-
         """
         current_time = time.time()
 
@@ -145,11 +145,6 @@ class FmScheduleHandler():
         if r_id is None:
             return
 
-        with self._sched_lock:
-            now = time.time()
-            last_robot_time = self._robot_last_interval_times.get(r_id, 0.0)
-            interval_elapsed = (now - last_robot_time) >= self._interval_seconds
-
         # ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
         # check if robot is task free
         # ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -187,11 +182,13 @@ class FmScheduleHandler():
         # Fetch orders for a specific fleet and serial number
         latest_order = self.traffic_handler.task_handler.order_handler.fetch_data(f_id, r_id, m_id)
 
-        # init robot: if robot has no order history, for traffic update, insert its current location as a default order target.
+        # init robot: if robot has no order history, for traffic update, 
+        # insert its current location as a default order target.
         if not latest_order or (r_id in self.traffic_handler.task_handler.cp_ignore_list and
                                 r_id not in self.traffic_handler.task_handler.ignore_list):
-            # 6.7.3 Map download: The map download is triggered by the `downloadMap` instant action from the master control.
-            # This command contains the mandatory parameters `mapId` and `mapDownloadLink` under which the map is stored on the map server and which can be accessed by the vehicle.
+            # 6.7.3 Map download: The map download is triggered by the `downloadMap` instant action from the 
+            # master control. This command contains the mandatory parameters `mapId` and `mapDownloadLink` 
+            # under which the map is stored on the map server and which can be accessed by the vehicle.
 
             records = self.traffic_handler.task_handler.visualization_handler.fetch_all_data(f_id)
             if records:
@@ -212,7 +209,6 @@ class FmScheduleHandler():
 
                 # register or init robot on the map.
                 self._handle_no_latest_order(f_id, r_id, last_node_id, home_dock_loc_ids, charge_dock_loc_ids)
-
 
         # manage current robot
         traffic_control, unassigned_tasks, ctx = self.traffic_handler.manage_traffic(
@@ -261,10 +257,16 @@ class FmScheduleHandler():
             # nodes disappear immediately rather than lingering on screen.
             self.traffic_handler.task_handler.visualization_handler.active_horizons.pop(r_id, None)
 
-        if interval_elapsed:
-            self._handle_iteration_interval(
-                f_id, r_id, m_id, v_id, is_free, bat_level, traffic_control, unassigned_tasks,
-                last_node_id, home_dock_loc_ids, charge_dock_loc_ids, station_dk_loc_ids, ctx)
+        with self._sched_lock:
+            current_count = self._robot_iteration_counts.get(r_id, 0)
+            if current_count == 0:
+                # Set to skip_count so the next N iterations return False
+                self._robot_iteration_counts[r_id] = self._iteration_skip_count
+                self._handle_iteration_interval(
+                    f_id, r_id, m_id, v_id, is_free, bat_level, traffic_control, unassigned_tasks,
+                    last_node_id, home_dock_loc_ids, charge_dock_loc_ids, station_dk_loc_ids, ctx)
+            else:
+                self._robot_iteration_counts[r_id] = current_count - 1
 
         # TODO!
         # monitor fleet wide error and send notification to users if necessary
@@ -310,10 +312,7 @@ class FmScheduleHandler():
     def _handle_iteration_interval(self, f_id, r_id, m_id, v_id, is_free,
                                    bat_level, traffic_control, unassigned_tasks, last_node_id, 
                                    home_dock_loc_ids, charge_dock_loc_ids, station_dk_loc_ids, ctx):
-        # Advance the per-robot interval time.
-        with self._sched_lock:
-            now = time.time()
-            self._robot_last_interval_times[r_id] = now
+        # --------------------------------------------------------------------------------------------
 
         # this function belongs in traffic handler.
         # Verify robot's readiness for task assignment
@@ -331,8 +330,21 @@ class FmScheduleHandler():
         if is_free:
 
             # task action is completed.
-            _ = self.traffic_handler.task_handler.order_handler.cleanup_orders(
+            cleanup_occurred = self.traffic_handler.task_handler.order_handler.cleanup_orders(
                 f_id=f_id, r_id=r_id, m_id=m_id, cleared=is_free)
+
+            # ----------------------------------------------------
+            all_home = traffic_control and all(n in home_dock_loc_ids for n in traffic_control)
+            # Trigger analytics if:
+            # 1. This is the first time we detected "All Home"
+            # 2. We are already "All Home" but a task was just cleaned up (meaning data changed)
+            if all_home and (not self._last_all_home_reported or cleanup_occurred):
+                self.traffic_handler.task_handler.visualization_handler.terminal_log_visualization(
+                    " --✔️-- 🛸 Event Detection - Part 2: All Home.",
+                    "FmScheduleHandler", "handle_iteration_interval", "info")
+                self.fm_analytics(self.fleetname, self.manufacturer, write_to_file=True)
+            self._last_all_home_reported = all_home
+            # ----------------------------------------------------
 
             # autocahrge: check battery level of each robot in fleet.
             if bat_level <= self.traffic_handler.task_handler.min_charge_level:
@@ -408,6 +420,17 @@ class FmScheduleHandler():
                     self._reassign_loop_task(f_id, r_id, m_id, v_id, traffic_control, 
                         last_node_id, home_dock_loc_ids, charge_dock_loc_ids, ctx)
 
+        # ----------------------------------------------------
+        station_node = next((n for n in getattr(self.traffic_handler, 'traffic_control_dict', {}).get(r_id, []) if n in station_dk_loc_ids), None)
+        is_station = bool(station_node)
+        if is_station and self._last_event_nodes.get(r_id) != station_node:
+            self.traffic_handler.task_handler.visualization_handler.terminal_log_visualization(
+                " --✔️-- 🛸 Event Detection - Part 1: Station Arrival.",
+                "FmScheduleHandler", "manage_robot", "info") 
+            self.fm_analytics(self.fleetname, self.manufacturer, write_to_file=True)
+            self._last_event_nodes[r_id] = station_node 
+        if not is_station: self._last_event_nodes.pop(r_id, None) 
+        # ----------------------------------------------------
 
     def _is_loop_task(self, ctx):
         """ check if robot currently on a loop task. """
@@ -751,18 +774,18 @@ class FmScheduleHandler():
             # Store for file output
             log_messages.append(message)
 
-        # --- Use log_and_store instead of direct logging ---
-        completed_orders = self.traffic_handler.task_handler.order_handler.fetch_completed_tasks(
-            f_id, m_id, cleared=True, task_type='transport', r_id=None)
-        log_and_store(f"number of total completed Orders: {len(completed_orders)}.")
+        # --- Use lightweight count queries ---
+        completed_count = self.traffic_handler.task_handler.order_handler.fetch_completed_tasks_count(
+            f_id, m_id, cleared=True, task_type='transport')
+        log_and_store(f"completed Orders: {completed_count}.")
 
-        cancelled_orders = self.traffic_handler.task_handler.order_handler.fetch_completed_tasks(
-            f_id, m_id, cleared=False, task_type='transport', r_id=None)
-        log_and_store(f"number of total cancelled Orders: {len(cancelled_orders)}.")
+        cancelled_count = self.traffic_handler.task_handler.order_handler.fetch_completed_tasks_count(
+            f_id, m_id, cleared=False, task_type='transport')
+        log_and_store(f"cancelled Orders: {cancelled_count}.")
 
-        charge_orders = self.traffic_handler.task_handler.order_handler.fetch_completed_tasks(
-            f_id, m_id, cleared=True, task_type='charge', r_id=None)
-        log_and_store(f"number of charge Orders fullfilled: {len(charge_orders)}.")
+        charge_count = self.traffic_handler.task_handler.order_handler.fetch_completed_tasks_count(
+            f_id, m_id, cleared=True, task_type='charge')
+        log_and_store(f"charge Orders: {charge_count}.")
 
         active_orders, unassigned_orders = \
             self.traffic_handler.task_handler.order_handler.fetch_active_and_unassigned_tasks(
@@ -771,9 +794,12 @@ class FmScheduleHandler():
         log_and_store(f"number of currently unassigned Orders: {len(unassigned_orders)}.")
         log_and_store(f"detected target collisions: {self.traffic_handler.collision_tracker}.")
 
+        # Update analytics in memory.
+
         num_robots, total_cum_delay = self.traffic_handler.task_handler.order_handler.calculate_completed_delays(
-            duration_window_sec=7200)
-        log_and_store(f"Dashboard - Cumulative Delay (s): {total_cum_delay:.2f}")
+            duration_window_sec=11200)
+        avg_cum_delay = (total_cum_delay / num_robots) if num_robots > 0 else 0.0
+        log_and_store(f"Dashboard - Cumulative Delay (s): {avg_cum_delay:.2f}")
 
         avg_times = self.traffic_handler.task_handler.order_handler.compute_average_execution_duration(show_plot=True)
         avg_task_completion = sum(avg_times.values()) / len(avg_times) if avg_times else 0.0

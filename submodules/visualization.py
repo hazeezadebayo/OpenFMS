@@ -919,9 +919,6 @@ class VisualizationSubscriber:
                 f.write("\n".join(dashboard_content) + "\n")
                 f.flush()
                 os.fsync(f.fileno())
-            with open(os.path.join(logs_dir, "test_dashboard_append.txt"), "w", encoding="utf-8") as tf:
-                tf.write("\n".join(dashboard_content) + "\n")
-                tf.flush()
         except IOError as e:
             print(f"[DEBUG] Dashboard writing failed: {e}")
             pass

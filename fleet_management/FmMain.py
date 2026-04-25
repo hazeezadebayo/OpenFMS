@@ -150,7 +150,7 @@ class FmMain():
         # initialization for thread
         self.timer_thread = None
         self.timer_thread_running = threading.Event()
-        self.lock = threading.Lock()  # Lock to ensure one process finishes before another starts
+        self.lock = threading.RLock()  # Lock to ensure one process finishes before another starts
 
         # Only start the timer thread if this script is run directly
         if __name__ == "__main__":
