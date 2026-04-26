@@ -63,7 +63,53 @@ SCENARIOS = {
             {"delay": 2, "robot_id": "R01", "from": "C12", "to": "C12", "type": "charge", "priority": "high", "payload": 5, "sent": False},
             {"delay": 8, "robot_id": "R02", "from": "C9", "to": "C9", "type": "charge", "priority": "low", "payload": 5, "sent": False}
         ]
-    }
+    },
+    "S4": {
+        "description": "C1-C5 / C2-C6 / C3-C7 / C4-C8: [No waitpoints on main line, both has free C_nodes], [Only one has free C_node with waitpoint option], [Both have waitpoints available]. Multiple parallel lines with cross-connections at C6/C7/C14/C15/C18/C19. Endpoints include station/charge/home docks.",
+        "custom_chains": [
+            # --- ---
+            "[C25(H) - C1(C) - C5(C)]",
+            "[C1(C) - W1(W)]",
+            "[C5(C) - W5(W)]",
+            # # --- ---
+            "[C28(H) - C4(C) - C8(C)]",
+            "[C4(C) - W4(W)]",
+            "[C8(C) - W8(W)]",      
+            # # | |
+            "[C11(S) - C5(C) - C6(C) - C7(C) - C8(C) - C12(S)]",
+            "[C9(S) - C1(C) - C2(C) - C3(C) - C4(C) - C10(S)]", 
+            # # | | 
+            "[C21(H) - C13(C) - C14(C) - C15(C) - C16(C) - C22(S)]",
+            "[C23(H) - C17(C) - C18(C) - C19(C) - C20(C) - C24(CH)]",
+            # # --- --- 
+            "[C26(S) - C2(C) - C6(C) - C14(C) - C18(C) - C29(S)]",       
+            "[C2(C) - W2(W)]",
+            "[C6(C) - W6(W)]",
+            "[C14(C) - W14(W)]",
+            "[C18(C) - W18(W)]",
+            # # --- ---  
+            "[C27(S) - C3(C) - C7(C) - C15(C) - C19(C) - C30(S)]",        
+            "[C3(C) - W3(W)]",
+            "[C7(C) - W7(W)]",
+            "[C15(C) - W15(W)]",
+            "[C19(C) - W19(W)]",
+            # # --- ---  
+            "[C31(H) - C17(C) - C13(C)]",
+            "[C17(C) - W17(W)]",
+            "[C13(C) - W13(W)]",
+            # # --- ---  
+            "[C32(H) - C20(C) - C16(C)]",
+            "[C20(C) - W20(W)]",
+            "[C16(C) - W16(W)]",
+            # # --- ---  
+        ],
+        "num_robots": 2,
+        "tasks": [
+            {"delay": 2, "robot_id": "R01", "from": "C11", "to": "C12", "type": "transport", "priority": "high", "payload": 5, "sent": False},
+            {"delay": 8, "robot_id": "R02", "from": "C9", "to": "C10", "type": "transport", "priority": "low", "payload": 5, "sent": False}
+        ]
+    },
+
 }
 
 

@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
+print("🚀 FmScheduleHandler Loaded - Cumulative Snapshot Version: 2026-04-26-v1")
 
 import psycopg2, psycopg2.extras
-import os, math, time, re, glob
+import os, math, time, re
 from typing import Any, Optional, List, Dict, Tuple, Union
 import yaml, datetime, random, threading
 try:
@@ -845,47 +846,28 @@ class FmScheduleHandler():
             except OSError:
                 pass
 
-            base_name = "result_snapshot"
-            # find all existing snapshot files
-            existing: List[str] = glob.glob(os.path.join(logs_dir, f"{base_name}_*.txt"))
-            
-            if existing:
-                # extract numeric suffixes and compute next index
-                indices = [
-                    int(os.path.splitext(f)[0].split("_")[-1])
-                    for f in existing
-                    if os.path.splitext(f)[0].split("_")[-1].isdigit()
-                ]
-                next_index = max(indices) + 1 if indices else 1
-            else:
-                next_index = 1
+            # Always write to a single fixed file — full global state on every call.
+            # _shared_analytics_data is a class-level accumulator, so this file
+            # always contains ALL robots, not just the one that triggered the event.
+            final_filename = os.path.join(logs_dir, "result_snapshot.txt")
+            temp_filename  = os.path.join(logs_dir, ".temp_result_snapshot.txt")
 
-            final_filename = os.path.join(logs_dir, f"{base_name}_{next_index}.txt")
-            temp_filename = os.path.join(logs_dir, f".temp_{base_name}_{next_index}.txt")
-
-            # 1. Write everything into a temporary hidden file FIRST
+            # 1. Write full state into a temporary file first
             with open(temp_filename, "w") as f:
                 for msg in log_messages:
                     f.write(msg + "\n")
-            
+
             # 2. Ensure host user can delete this file without sudo
             try:
                 os.chmod(temp_filename, 0o666)
             except OSError:
                 pass
 
-            # 3. Atomically swap it to the final filename
+            # 3. Atomically swap: previous snapshot replaced by current full state
             os.rename(temp_filename, final_filename)
 
-            # 4. Remove all previous snapshot files to avoid clutter
-            for old_file in existing:
-                if old_file != final_filename:
-                    try:
-                        os.remove(old_file)
-                    except Exception:
-                        pass
-
-            print(f"✅ Results written to {final_filename}")
+            print(f"✅ Results written to: {final_filename}")
+            print(f"   (Access on host at: logs/result_snapshot.txt)")
 
 
 # ────────────────────────────────────────────────

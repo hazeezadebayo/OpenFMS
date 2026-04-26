@@ -421,5 +421,20 @@ TODO
 - **Atomic File Writing**: Switched `visualization.py` to a `write-to-tmp` and `os.replace` pattern for `live_dashboard.txt`.
 - **Persistent Analytics Fallback**: The visualization subscriber now maintains a "last-known-good" state for core and system metrics. If a snapshot is temporarily empty or missing (e.g., during a clear), it holds the previous values to ensure a smooth, persistent UI.
 
+## 9. Recent Optimizations: Persistence & Isolation (April 2026)
+
+### ✅ Project Isolation: Decoupling from Trash
+**Issue:** Project containers and volumes were colliding with deleted versions of the repo inside the Linux Trash folder (`~/.local/share/Trash/...`), leading to permission errors and "ghost" logs.
+**Fix:** 
+- Hardened `run_openfms.sh` with a dedicated project namespace: `PROJ="openfms_v2"`.
+- Enforced the project flag `-p openfms_v2` across all Docker Compose commands to ensure absolute isolation from stale environments.
+
+### ✅ Persistence: Unified Analytics Snapshot
+**Issue:** Analytics logs were fragmented across multiple files (`result_snapshot_N.txt`) or lost entirely if the simulation was interrupted before a completion event.
+**Fix:**
+- **Unified Filename**: Refactored `FmScheduleHandler.py` to write all fleet-wide metrics to a single fixed file: `logs/result_snapshot.txt`.
+- **Atomic Persistence**: Implemented an `os.rename` (write-to-temp-then-move) pattern to prevent file corruption and ensure host-side visibility.
+- **Startup Initialization**: Added an immediate `fm_analytics` call at simulation startup in `FmMain.py`. This guarantees the results file exists from the first second of execution, even if the user terminates early.
+
 ---
 *End of Report*

@@ -109,7 +109,7 @@ postgres:
 Check if data is being recorded by running:
 
 ```bash
-docker exec -it openfms-db-1 psql -U postgres -d postgres -c "SELECT * FROM state LIMIT 5;"
+docker exec -it openfms_v2-db-1 psql -U postgres -d postgres -c "SELECT * FROM state LIMIT 5;"
 ```
 
 ## 🐳 Docker (Zero to Hero)
@@ -121,7 +121,7 @@ The easiest way to run OpenFMS along with all its dependencies (PostgreSQL, Mosq
 The simplest way to start the environment is using the provided startup script:
 
 ```bash
-bash run_openfms.sh S1
+./run_openfms.sh S1
 ```
 
 Alternatively, using direct Docker commands:
@@ -138,7 +138,7 @@ To visualize the fleet navigation, robot positions, and live analytics in real-t
 **In a separate terminal, run:**
 
 ```bash
-docker compose up dashboard
+docker compose -p openfms_v2 up dashboard
 ```
 
 This will display:
@@ -147,6 +147,13 @@ This will display:
 * **System Analytics**: Total/Active/Unassigned orders and fleet throughput.
 * **Conflict Monitoring**: Real-time traffic resolution status.
 
+
+### 📊 Persistent Analytics
+On every run, the system generates a unified cumulative report in `logs/result_snapshot.txt`. This file captures the full state of the fleet (throughput, latency, idle times) and is accessible from the host machine even after the simulation stops.
+
+```bash
+cat logs/result_snapshot.txt
+```
 
 ### Dashboard Preview (ASCII)
 ```text
@@ -188,28 +195,21 @@ This will display:
 
 If you need to see the raw VDA5050 messaging or internal logic traces:
 
-* **Fleet Manager Logic**: `docker compose logs -f scenario`
-* **Robot Simulator Feed**: `docker compose logs -f simulator`
+* **Fleet Manager Logic**: `docker compose -p openfms_v2 logs -f scenario`
+* **Robot Simulator Feed**: `docker compose -p openfms_v2 logs -f simulator`
 
-### 4. Manual vs Automated Mode (Dynamic Tasks)
+The easiest way to enter interactive mode is via the script:
 
-By default, the system runs an automated script (`FmInterface.py`). To switch to **Interactive Manual Mode**:
+```bash
+./run_openfms.sh --interactive
+```
 
-1. Open `docker-compose.yml`.
-2. **Comment out** the `scenario` service.
-3. **Uncomment** the `manager` service.
-4. Restart the stack:
+Alternatively, to manually attach to the manager container:
 
-   ```bash
-   docker compose up -d --remove-orphans
-   ```
-5. **Attach to the Manager**: Since the manager needs player input for its terminal GUI, you must attach to it:
+1. Start the stack: `docker compose -p openfms_v2 up -d`
+2. **Attach**: `docker attach openfms_v2-manager-1`
 
-   ```bash
-   docker attach openfms-manager-1
-   ```
-
-   *Note: Use `Ctrl+P, Ctrl+Q` to detach without killing the process.*
+*Note: Use `Ctrl+P, Ctrl+Q` to detach without killing the process.*
 
 ### 5. Stopping the Simulation
 

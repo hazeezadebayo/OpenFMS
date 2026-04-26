@@ -1,6 +1,7 @@
 #!/bin/bash
 
 # OpenFMS Unified Test & Run Script
+PROJ="openfms_v2"
 # ======================================================
 # MODE 1 (default): Custom or Automated Scenario via 
 #   FmInterface Generates a map topology, boots infra, 
@@ -33,22 +34,20 @@ echo "🧹 Pre-flight: cleaning stale containers and analytics files..."
 echo "================================================================"
 
 # Tear down any running compose services and orphan containers
-docker compose down --remove-orphans > /dev/null 2>&1
+docker compose -p $PROJ down --remove-orphans > /dev/null 2>&1
 
-# Force-remove any lingering openfms containers from previous broken runs
-STALE=$(docker ps -aq --filter "name=openfms")
+# Force-remove any lingering openfms containers from previous broken runs or Trash path collisions
+STALE=$(docker ps -aq --filter "label=com.docker.compose.project=$PROJ")
 if [ -n "$STALE" ]; then
     docker rm -f $STALE > /dev/null 2>&1
-    echo "   ✓ Removed stale containers"
+    echo "   ✓ Removed all lingering openfms containers"
 else
-    echo "   ✓ No stale containers found"
+    echo "   ✓ No lingering openfms containers found"
 fi
-
 # Wipe analytics snapshot files and the live dashboard.
-# Without this, the dashboard reads snapshots from previous runs,
-# e.g. showing 3 robots when this run only has 2.
-rm -f logs/result_snapshot_*.txt logs/live_dashboard.txt 2>/dev/null
+rm -f logs/result_snapshot*.txt logs/live_dashboard.txt 2>/dev/null
 echo "   ✓ Stale analytics logs cleared"
+
 echo ""
 
 # ════════════════════════════════════════════════════════
@@ -63,15 +62,15 @@ if [ "$MODE" == "scenario" ]; then
     echo "[1/4] 🗺️  Generating Map Topology for '$SCENARIO'..."
     # Always rebuild to ensure the latest fms project files are copied into the container without relying on volumes
     echo "🏗️  Building isolated Docker images (cached layer enforcement)..."
-    docker compose build
+    docker compose -p $PROJ build
     if [ $? -ne 0 ]; then
         echo "❌ Error: Docker build failed. Aborting."
         exit 1
     fi
 
-    # 'docker compose run' is designed specifically to ignore the command defined in the YAML file.
-    # the 'command' in docker-compose.yml service only executes if we use 'docker compose up'.
-    docker compose run --rm scenario python3 fleet_management/FmInterface.py generate "$SCENARIO"
+    # 'docker compose -p $PROJ run' is designed specifically to ignore the command defined in the YAML file.
+    # the 'command' in docker-compose.yml service only executes if we use 'docker compose -p $PROJ up'.
+    docker compose -p $PROJ run --rm scenario python3 fleet_management/FmInterface.py generate "$SCENARIO"
     if [ $? -ne 0 ]; then
         echo "❌ Failed to generate map. Aborting."
         exit 1
@@ -84,7 +83,7 @@ if [ "$MODE" == "scenario" ]; then
     sed -i 's|host: localhost|host: db|g' config/config.yaml
 
     echo "[2/4] 🚀 Starting MQTT, PostgreSQL, and Robot Simulator..."
-    docker compose up -d mqtt db simulator
+    docker compose -p $PROJ up -d mqtt db simulator
     if [ $? -ne 0 ]; then
         echo "❌ Error: Failed to start infrastructure containers."
         exit 1
@@ -93,7 +92,7 @@ if [ "$MODE" == "scenario" ]; then
     echo "   Waiting for PostgreSQL to be ready..."
     READY=1
     for i in {1..30}; do
-        docker compose exec db pg_isready -U postgres > /dev/null 2>&1
+        docker compose -p $PROJ exec db pg_isready -U postgres > /dev/null 2>&1
         if [ $? -eq 0 ]; then
             echo "   ✅ PostgreSQL is ready!"
             READY=0
@@ -112,15 +111,16 @@ if [ "$MODE" == "scenario" ]; then
     echo ""
     echo "[4/4] 🎮 Launching FmInterface (Fleet Manager & Dispatcher)..."
     echo "   📋 Live output is also saved to: logs/FmLogHandler.log"
-    docker compose run --rm scenario \
+    docker compose -p $PROJ run --rm scenario \
         python3 -u fleet_management/FmInterface.py run "$SCENARIO" 2>&1 | tee logs/FmLogHandler.log
 
     echo ""
     echo "================================================================"
     echo "✅ Scenario complete."
-    echo "   🔍 RealTime Nav:    docker compose up dashboard"
+    echo "   🔍 RealTime Nav:    docker compose -p $PROJ up dashboard"
     echo "   📋 Output log:     cat logs/FmLogHandler.log"
-    echo "   🔍 Simulator feed: docker compose logs -f simulator"
+    echo "   🔍 Simulator feed: docker compose -p $PROJ logs -f simulator"
+    echo "   🔍 Analytics:      cat logs/result_snapshot.txt"
     echo "   🛑 Stop all:       ./kill_openfms.sh"
     echo "================================================================"
 
@@ -134,7 +134,7 @@ elif [ "$MODE" == "interactive" ]; then
     echo "================================================================"
     # Always rebuild to ensure the latest fms project files are copied into the container without relying on volumes
     echo "🏗️  Building isolated Docker images (cached layer enforcement)..."
-    docker compose build
+    docker compose -p $PROJ build
     if [ $? -ne 0 ]; then
         echo "❌ Error: Docker build failed. Aborting."
         exit 1
@@ -146,7 +146,7 @@ elif [ "$MODE" == "interactive" ]; then
     sed -i 's|host: "localhost"|host: "db"|g' config/config.yaml
     sed -i 's|host: localhost|host: db|g' config/config.yaml
     echo "[1/2] 🚀 Booting MQTT, PostgreSQL, Robot Simulator, and Fleet Manager..."
-    docker compose up -d mqtt db simulator manager
+    docker compose -p $PROJ up -d mqtt db simulator manager
     if [ $? -ne 0 ]; then
         echo "❌ Error: Failed to start containers."
         exit 1
@@ -155,7 +155,7 @@ elif [ "$MODE" == "interactive" ]; then
     echo "   Waiting for PostgreSQL to be ready..."
     READY=1
     for i in {1..30}; do
-        docker compose exec db pg_isready -U postgres > /dev/null 2>&1
+        docker compose -p $PROJ exec db pg_isready -U postgres > /dev/null 2>&1
         if [ $? -eq 0 ]; then
             echo "   ✅ PostgreSQL is ready!"
             READY=0
@@ -198,14 +198,14 @@ elif [ "$MODE" == "interactive" ]; then
     echo "Attaching in 3 seconds..."
     sleep 3
 
-    docker attach openfms-manager-1
+    docker attach ${PROJ}-manager-1
 
     echo ""
     echo "================================================================"
     echo "👋 Detached from FmMain."
-    echo "   🔍 Manager logs:    docker compose logs -f manager"
-    echo "   🔍 Simulator feed:  docker compose logs -f simulator"
-    echo "   🔍 RealTime Nav:    docker compose up dashboard"
+    echo "   🔍 Manager logs:    docker compose -p $PROJ logs -f manager"
+    echo "   🔍 Simulator feed:  docker compose -p $PROJ logs -f simulator"
+    echo "   🔍 RealTime Nav:    docker compose -p $PROJ up dashboard"
     echo "   🛑 Stop all:        ./kill_openfms.sh"
     echo "================================================================"
 fi

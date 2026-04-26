@@ -823,22 +823,25 @@ class VisualizationSubscriber:
         os.makedirs(logs_dir, exist_ok=True)
         
         # Use absolute docker mapping first, fallback to relative logic
-        search_path = "/app/logs/result_snapshot_*.txt"
-        existing_snapshots = glob.glob(search_path)
-        if not existing_snapshots:
-            search_path = os.path.join(logs_dir, "result_snapshot_*.txt")
-            existing_snapshots = glob.glob(search_path)
+        search_path = "/app/logs/result_snapshot.txt"
+        if not os.path.exists(search_path):
+            search_path = os.path.join(logs_dir, "result_snapshot.txt")
         
-        if existing_snapshots:
-            # Get the most recent snapshot file by numeric index
-            def extract_idx(f):
-                base = os.path.splitext(f)[0]
-                parts = base.split("_")
-                if parts[-1].isdigit(): return int(parts[-1])
-                return -1
-            
-            latest_snapshot = max(existing_snapshots, key=extract_idx)
-            
+        latest_snapshot = None
+        if os.path.exists(search_path):
+            latest_snapshot = search_path
+        else:
+            # Fallback for old numbered files
+            existing_snapshots = glob.glob(os.path.join(logs_dir, "result_snapshot_*.txt"))
+            if existing_snapshots:
+                def extract_idx(f):
+                    base = os.path.splitext(f)[0]
+                    parts = base.split("_")
+                    if parts[-1].isdigit(): return int(parts[-1])
+                    return -1
+                latest_snapshot = max(existing_snapshots, key=extract_idx)
+        
+        if latest_snapshot:
             # We want to display a compact summary
             try:
                 with open(latest_snapshot, "r", encoding="utf-8") as rf:
@@ -914,7 +917,8 @@ class VisualizationSubscriber:
         dashboard_path = os.path.join(logs_dir, "live_dashboard.txt")
         
         try:
-            print(f"[DEBUG] Writing dashboard loop trace - found {len(existing_snapshots)} snapshots. Array has {len(dashboard_content)} lines.")
+            num_snaps = 1 if latest_snapshot else 0
+            print(f"[DEBUG] Writing dashboard loop trace - found {num_snaps} snapshots. Array has {len(dashboard_content)} lines.")
             with open(dashboard_path, "w", encoding="utf-8") as f:
                 f.write("\n".join(dashboard_content) + "\n")
                 f.flush()

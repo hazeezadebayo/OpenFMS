@@ -22,6 +22,7 @@ ARG CACHEBUST=1
 
 # Copy the current directory contents into the container at /app
 COPY . .
+RUN echo "🚀 OpenFMS Image Built - Persistence Fix Version: 2026-04-26-v1"
 
 # Set python path to allow imports from root and submodules
 ENV PYTHONPATH=/app:/app/submodules
