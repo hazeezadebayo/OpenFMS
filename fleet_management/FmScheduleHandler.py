@@ -146,6 +146,8 @@ class FmScheduleHandler():
         if r_id is None:
             return
 
+        print(">>>>>>>> : START : "+str(r_id)+" : >>>>>>>>")
+
         # ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
         # check if robot is task free
         # ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -268,6 +270,9 @@ class FmScheduleHandler():
                     last_node_id, home_dock_loc_ids, charge_dock_loc_ids, station_dk_loc_ids, ctx)
             else:
                 self._robot_iteration_counts[r_id] = current_count - 1
+
+
+        print(">>>>>>>> : END : "+str(r_id)+" : >>>>>>>>")
 
         # TODO!
         # monitor fleet wide error and send notification to users if necessary
@@ -811,8 +816,10 @@ class FmScheduleHandler():
         timestamps, throughput_values = self.traffic_handler.task_handler.order_handler.compute_overall_throughput(show_plot=True)
         ptp = max(throughput_values) if throughput_values else 0
         log_and_store(f"Dashboard - Peak Throughput (PTP): {ptp:.2f}")
+        cumulative_count = 0
         for timestamp, throughput in zip(timestamps, throughput_values):
-            log_and_store(f"timestamp [min]: {timestamp}, Throughput: {throughput:.2f}.")
+            cumulative_count += throughput
+            log_and_store(f"timestamp [min]: {timestamp}, Throughput: {throughput:.2f}, Cumulative: {cumulative_count:.2f}.")
 
         avg_per_robot_latencies = self.traffic_handler.task_handler.state_handler.compute_robot_avg_latency(show_plot=True)
         log_and_store(f"avg per robot latency [sec]: {avg_per_robot_latencies}.")

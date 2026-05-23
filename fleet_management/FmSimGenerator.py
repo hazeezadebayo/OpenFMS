@@ -409,12 +409,25 @@ class GridFleetGraph:
                 if not position_is_occupied(cand_x, cand_y):
                     return cand_x, cand_y
 
-            # If all directions blocked → fallback: slight diagonal offset (rare case)
-            fallback_x = prev_x + self.edge_length * 0.707  # ≈45°
-            fallback_y = prev_y + self.edge_length * 0.707
-            fallback_x, fallback_y = snap_pos(fallback_x, fallback_y)
-            print("  WARNING: All 4 directions occupied → using fallback diagonal position")
-            return fallback_x, fallback_y
+            # If all directions blocked -> fallback: try diagonals, then wider spiral
+            for angle in [45, 135, 225, 315]:
+                rad = math.radians(angle)
+                cand_x, cand_y = snap_pos(prev_x + self.edge_length * math.cos(rad),
+                                          prev_y + self.edge_length * math.sin(rad))
+                if not position_is_occupied(cand_x, cand_y):
+                    return cand_x, cand_y
+
+            # Final fallback: spiral outward
+            for radius_mult in range(2, 5):
+                for angle in range(0, 360, 45):
+                    rad = math.radians(angle)
+                    cand_x, cand_y = snap_pos(prev_x + self.edge_length * radius_mult * math.cos(rad),
+                                              prev_y + self.edge_length * radius_mult * math.sin(rad))
+                    if not position_is_occupied(cand_x, cand_y):
+                        print(f"  WARNING: High density area -> using spiral fallback at radius {radius_mult}")
+                        return cand_x, cand_y
+
+            raise RuntimeError(f"Could not find free position for node near ({prev_x}, {prev_y})")
 
         # Global spawn for new disconnected components
         current_x = 0.0

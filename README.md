@@ -147,8 +147,8 @@ This will display:
 * **System Analytics**: Total/Active/Unassigned orders and fleet throughput.
 * **Conflict Monitoring**: Real-time traffic resolution status.
 
-
 ### 📊 Persistent Analytics
+
 On every run, the system generates a unified cumulative report in `logs/result_snapshot.txt`. This file captures the full state of the fleet (throughput, latency, idle times) and is accessible from the host machine even after the simulation stops.
 
 ```bash
@@ -156,17 +156,18 @@ cat logs/result_snapshot.txt
 ```
 
 ### Dashboard Preview (ASCII)
+
 ```text
 ════════════════════════════════════════════════════════════════════════════════════════════════════
-                                Fleet kullar | Nodes: 8 | Robots: 2                                 
+                                Fleet kullar | Nodes: 8 | Robots: 2                               
 
-                                       📊 FLEET-WIDE ANALYTICS                                       
+                                       📊 FLEET-WIDE ANALYTICS                                     
 ────────────────────────────────────────────────────────────────────────────────────────────────────
-                     completed Orders: 0. | active Orders: 0. | unassigned Orders: 0. | Conflicts: 0.                    
-         Cumulative Delay: 0.0s | Task Completion: 0.0s | Peak Throughput (PTP): 0.0                
-                       State Msg Latency: 0.0s | Idle Time: 0.0s                         
+                     completed Orders: 0. | active Orders: 0. | unassigned Orders: 0. | Conflicts: 0.                  
+         Cumulative Delay: 0.0s | Task Completion: 0.0s | Peak Throughput (PTP): 0.0              
+                       State Msg Latency: 0.0s | Idle Time: 0.0s                       
 ════════════════════════════════════════════════════════════════════════════════════════════════════
-                             Scale ≈ 20×16 | x:[0.0…18.0] y:[-6.0…6.0]                              
+                             Scale ≈ 20×16 | x:[0.0…18.0] y:[-6.0…6.0]                            
 ════════════════════════════════════════════════════════════════════════════════════════════════════
                                C12   ─    ─    ─    ─    ─   C13
                                 │    ─   W12
@@ -189,7 +190,6 @@ cat logs/result_snapshot.txt
 
 > [!TIP]
 > This is a much better way to "watch" the simulation than reading raw logs.
-
 
 ### 3. Verify Execution (Logs)
 

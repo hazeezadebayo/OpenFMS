@@ -21,7 +21,7 @@ from factsheet import FactsheetSubscriber
 from state import StateSubscriber
 from visualization import VisualizationSubscriber
 from instant_actions import InstantActionsPublisher
-from order import OrderPublisher
+from order import OrderPublisher, RoutePlan
 
 import numpy as np
 import skfuzzy as fuzz
@@ -509,12 +509,34 @@ class FmTaskHandler:
             header_id = self.header_id_count + 1
             order_id, update_id = self.generate_new_order_id()
 
-            b_node, h_nodes, h_edges = self.order_handler.create_order(
-                checkpoints, waitpoints, agv_itinerary, wait_itinerary, landmark)
+            map_name = self.get_node_map(f_id, checkpoints[0]) if hasattr(self, 'get_node_map') else 'map'
+            # 1. Instantiate the frozen RoutePlan with an explicitly empty release vector
+            plan = RoutePlan(
+                fleet_id=f_id,
+                robot_id=r_id,
+                version=self.version,
+                manufacturer=self.manufacturer,
+                header_id=header_id,
+                order_id=order_id,
+                update_id=update_id,
+                map_name=map_name,
+                checkp_nodes=checkpoints,
+                checkp_poses=agv_itinerary,
+                waitp_nodes=waitpoints,
+                waitp_poses=wait_itinerary,
+                landmarks=landmark,
+                release_nodes=[],  # <--- Explicitly empty: blocks vehicle movement commands
+                release_type=""
+            )
 
-            self.order_handler.build_order_msg(
-                f_id, r_id, header_id, self.version, self.manufacturer,
-                b_node, h_nodes, h_edges, order_id, update_id)
+            # 2. Extract and stitch the master geometric trajectory map arrays
+            merged_nodes, merged_poses = self.order_handler._merge_trajectory_itinerary(plan)
+
+            # 3. Construct the VDA-5050 symmetric whole-path database entries
+            b_node, b_edge, h_nodes, h_edges = self.order_handler.create_order(plan, merged_nodes, merged_poses)
+
+            # 4. Write full transactional context to the DB and cleanly block MQTT transmission
+            self.order_handler.build_order_msg(plan, b_node, b_edge, h_nodes, h_edges)
 
         except (ValueError, TypeError) as e:
             self.visualization_handler.terminal_log_visualization(
@@ -701,10 +723,13 @@ class FmTaskHandler:
                 # check battery level
                 # -----------------
                 if float(battery_charge) > self.min_charge_level:
-                    if at_home and not len(order_nodes) > 1:
-                        cleared = True
-                    elif (task_name == 'loop') and (last_node_id in station_dk_loc_ids) and len(order_nodes) == 1:
-                        # robot at drop off location
+                    # Robot is "cleared" (ready for next task) if it's at a valid dock 
+                    # and has no more horizon nodes to visit.
+                    is_at_valid_dock = (at_home or 
+                                       last_node_id in station_dk_loc_ids or 
+                                       last_node_id in charge_dock_loc_ids)
+                    
+                    if is_at_valid_dock and not len(order_nodes) > 1:
                         cleared = True
                     else:
                         # if it was not at home, check if last task/order was cancelled.

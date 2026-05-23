@@ -2,6 +2,9 @@ import json, os, logging, datetime, time, uuid, math, re, sys, threading
 from psycopg2 import sql
 import psycopg2, psycopg2.extras
 
+from dataclasses import dataclass
+from typing import List, Tuple, Any
+
 import numpy as np
 
 
@@ -22,6 +25,33 @@ import numpy as np
     # Timeline:   [====== Task 1 =====] [----------- IDLE ------------] [== Task 2 ==]
     #             ^                   ^                                 ^
     #         Sim Starts         Task 1 Done                       Task 2 Done
+
+
+@dataclass(frozen=True)
+class RoutePlan:
+    """
+    A single publishable route plan.
+
+    The route is expressed as:
+        base node + future route nodes
+
+    The composer will turn that into a VDA-style order message.
+    """
+    fleet_id: str
+    robot_id: str
+    version: str
+    manufacturer: str
+    header_id: int
+    order_id: str
+    update_id: int
+    map_name: str
+    checkp_nodes: List[str]
+    checkp_poses: List[Tuple[float, float, float, float]]
+    waitp_nodes: List[str]
+    waitp_poses: List[Tuple[float, float, float, float]]
+    landmarks: List[Any]
+    release_nodes: List[str]
+    release_type: str    
 
 
 class OrderPublisher:
@@ -145,10 +175,20 @@ class OrderPublisher:
         throughput_values = bins
 
         if show_plot:
+            # 1. Throughput Rate Chart
             self.terminal_bar_chart(
                 data=dict(zip(timestamps, throughput_values)),
                 xlabel="Minute",
-                title=f"Overall Throughput Over {actual_duration_minutes} Minutes"
+                title=f"Overall Throughput Over {actual_duration_minutes} Minutes",
+                unit="tasks"
+            )
+            # 2. Cumulative Completion Chart
+            cumulative_bins = np.cumsum(bins).tolist()
+            self.terminal_bar_chart(
+                data=dict(zip(timestamps, cumulative_bins)),
+                xlabel="Minute",
+                title=f"Cumulative Task Completion Over {actual_duration_minutes} Minutes",
+                unit="tasks"
             )
 
         return timestamps, throughput_values
@@ -366,7 +406,7 @@ class OrderPublisher:
 
         return avg_times
 
-    def terminal_bar_chart(self, data, xlabel="Category", title="Bar Chart"):
+    def terminal_bar_chart(self, data, xlabel="Category", title="Bar Chart", unit="sec"):
         """
         Draws a simple ASCII bar chart.
 
@@ -385,7 +425,7 @@ class OrderPublisher:
         print(f"\n{title}\n")
         for key, val in data.items():
             bar = "#" * int(val * scale)
-            print(f"{key}: {bar} ({val:.2f} sec)")
+            print(f"{key}: {bar} ({val:.2f} {unit})")
 
 
     # --------------------------------------------------------------------------------------------
@@ -479,266 +519,145 @@ class OrderPublisher:
 
         return roll, pitch, yaw
 
+    # ======================================================================== #
+    # TRAJECTORY COMPOSITION UTILITIES                                         #
+    # ======================================================================== #
 
-    def merge_itineraries(self, checkpoints, waitpoints, agv_itinerary, wait_itinerary):
-        """
-        Merges checkpoints with their corresponding waitpoints, ensuring that the waitpoint for each node is
-        inserted after the node, and updates the agv_itinerary accordingly.
+    def _merge_trajectory_itinerary(self, plan: RoutePlan) -> tuple[list[str], list[tuple]]:
+        """Combines raw checkpoints and waitpoints into a continuous tracking sequence."""
+        merged_nodes, merged_poses = [], []
+        wp_map = dict(zip(plan.waitp_nodes, plan.waitp_poses))
 
-        Requires global scope:
-            checkpoints (list): List of nodes the AGV needs to visit (e.g. ['A11', 'A8', 'A3']).
-            waitpoints (list): List of waitpoints (e.g. ['W11', 'W8']).
-            agv_itinerary (list): Corresponding coordinates for the checkpoints (e.g. [[x1, y1, z1, w1], ...]).
-            wait_itinerary (list): Corresponding coordinates for the waitpoints (e.g. [[wx1, wy1, wz1, ww1], ...]).
-
-        Returns:
-            merged_nodes (list): Combined list of checkpoints and waitpoints.
-            merged_itinerary (list): Combined list of coordinates for checkpoints and waitpoints.
-        """
-        merged_nodes = []
-        merged_itinerary = []
-
-        # Create a mapping from waitpoints to their coordinates
-        waitpoint_dict = {wp: wi for wp, wi in zip(waitpoints, wait_itinerary)}
-
-        for idx, node in enumerate(checkpoints):
-            # Add the checkpoint and its itinerary
+        for idx, node in enumerate(plan.checkp_nodes):
             merged_nodes.append(node)
-            merged_itinerary.append(agv_itinerary[idx])
+            merged_poses.append(plan.checkp_poses[idx])
 
-            # Generate the waitpoint corresponding to the current checkpoint
-            waitpoint = f'W{node[1:]}'
+            # Inject corresponding waitpoint companion if explicitly tracked
+            companion_wp = f"W{node[1:]}"
+            if companion_wp in wp_map:
+                merged_nodes.append(companion_wp)
+                merged_poses.append(wp_map[companion_wp])
 
-            # If the generated waitpoint exists in the waitpoints list, insert it
-            if waitpoint in waitpoint_dict:
-                merged_nodes.append(waitpoint)
-                merged_itinerary.append(waitpoint_dict[waitpoint])
+        return merged_nodes, merged_poses
 
-        return merged_nodes, merged_itinerary
+    def create_order(self, plan: RoutePlan, nodes: list[str], poses: list[tuple]) -> tuple[dict, list[dict], list[dict]]:
+        """Constructs base_node, sequence nodes, and interconnecting edges based on explicit release counts."""
+        horizon_nodes, horizon_edges = [], []
+        
+        # Parse timing metadata constraints directly
+        wait_time = float(plan.release_type) if plan.release_type and str(plan.release_type).replace('.', '', 1).lstrip('-').isdigit() else None
+        self.current_order_wait = wait_time
 
-
-    # Function to extract the number from a node
-    def extract_number(self, node):
-        """ extract node number or id after C E or W etc. """
-        match = re.search(r'\d+', node)
-        return int(match.group()) if match else None
-
-
-    def create_order(self, checkpoints, waitpoints, agv_itinerary, wait_itinerary, landmark, map_name='map', release_node=None, h_node_eta=None, wait_time=None):
-        """
-        Builds and inserts an order message based on merged checkpoints and waitpoints.
-        requires:
-            checkpoints: A list of checkpoints. (global scope)
-            waitpoints: A list of waitpoints. (global scope)
-            agv_itinerary: The AGV's itinerary for the checkpoints. (global scope)
-            wait_itinerary: The AGV's itinerary for the waitpoints. (global scope)
-            landmark: List containing payload_kg, task priority, task type, and dock information.
-        """
-        # Merge checkpoints and waitpoints along with their corresponding itineraries
-        merged_nodes, merged_itinerary = self.merge_itineraries(checkpoints, waitpoints, agv_itinerary, wait_itinerary)
-        horizon_nodes = []
-        horizon_edges = []
-        # Determine the node to be released
-        release_index = None
-        # Find the intended node in the filtered merged list or Find the waitpoint next to the intended node
-        if release_node is not None:
-            intended_node = release_node[0]
-            for i, node in enumerate(merged_nodes):
-                if node == intended_node and [n for n in merged_nodes[i:] if not n.startswith('W')] == release_node:
-                    release_index = i
-                    # if we wanna wait!
-                    if wait_time is not None:
-                        wait_time = float(wait_time)
-                        # Check if the first merged_node has a corresponding waitpoint
-                        if merged_nodes[0].startswith('C') and merged_nodes[1].startswith('W'):
-                            # assert that the number beside the W is same as the checkpoint number
-                            if self.extract_number(merged_nodes[0]) == self.extract_number(merged_nodes[1]):
-                                # Swap the checkpoint with the waitpoint
-                                self.logger.info("Swapping waitpoint with the first checkpoint.")
-                                merged_nodes[0], merged_nodes[1] = merged_nodes[1], merged_nodes[0]
-                                merged_itinerary[0], merged_itinerary[1] = merged_itinerary[1], merged_itinerary[0]
-                                release_index = 0  # Set release index to zero
-                    break
-        else:
-            # If release_node is None, we don't want any node to be released
-            release_index = 0  # Start from the beginning
-            wait_time = None  # Override wait_time to ensure no nodes are released
-
-        # base is assumed the current node always granted to the robot.
+        # Establish firm VDA-5050 baseline origin tracking point
         base_node = {
-            "nodeId": checkpoints[0],
-            "released": True,
-            "sequenceId": 1, # Odd sequenceId for nodes,
-            "nodeDescription": "current base node.",
+            "nodeId": plan.checkp_nodes[0], "released": True, "sequenceId": 1,
+            "nodeDescription": "Current base node.",
             "nodePosition": {
-                "x": agv_itinerary[0][0],
-                "y": agv_itinerary[0][1],
-                "theta": self.quaternion_to_euler(0, 0, agv_itinerary[0][2], agv_itinerary[0][3])[-1],
-                "mapId": map_name,
-                "allowedDeviationXY": 0.5,
-                "allowedDeviationTheta": 3.1
-            },
-            "actions": []
+                "x": plan.checkp_poses[0][0], "y": plan.checkp_poses[0][1],
+                "theta": self.quaternion_to_euler(0, 0, plan.checkp_poses[0][2], plan.checkp_poses[0][3])[-1],
+                "mapId": plan.map_name, "allowedDeviationXY": 0.5, "allowedDeviationTheta": 3.1
+            }, "actions": []
         }
 
-        # Create the order message using the merged data
-        for i, (node_id, location) in enumerate(zip(merged_nodes[release_index:], merged_itinerary[release_index:])):
-            x, y, z, w = location
-            theta = self.quaternion_to_euler(0, 0, z, w)[-1]
-            # Determine if the node is a dock node (e.g., C5, C4, etc.)
-            is_dock_node = any(node_id == dock for dock in landmark)
-            # Build action parameters for dock nodes
-            action_parameters = []
-            if is_dock_node:
-                # Include landmark information for dock nodes
-                action_parameters = [{"key": "landmark", "value": landmark}]
-            # Create a node description based on task priority and type
-            # and Determine the node type based on the prefix of node_id
-            if node_id.startswith('C'):
-                node_type = "Checkpoint"
-            elif node_id.startswith('W'):
-                node_type = "Waitpoint"
-            else:
-                node_type = "Unknown"  # Optional: Handle other cases
+        # Create a custom self-looping edge connecting the duplicated nodes 
+        base_edge = {
+            "edgeId": f"edge_base_{base_node['nodeId']}", "released": True, "sequenceId": 2, 
+            "startNodeId": base_node["nodeId"], "endNodeId": nodes[0], "actions": []
+        }
+
+        # Build trajectory matrix elements matching the pre-stitched sequence window
+        released_count = len(plan.release_nodes)
+        for i, (node_id, pose) in enumerate(zip(nodes, poses)):
+            x, y, z, w = pose
+            is_dock = any(node_id == d for d in plan.landmarks)
+            
+            # Zero Gymnastics: The front of the stitched path represents the exact active release window
+            released_flag = (i < released_count)
+            if released_flag: print("----> node id: ", node_id)
+
             # Create the node description
-            node_description = (
-                f"Task Priority: {landmark[1] if landmark else 'None'}, "
-                f"Task Type: {landmark[2] if len(landmark) > 2 else 'None'}, "
-                f"Node Type: {node_type}, "
-                f"Wait Time: {wait_time if wait_time is not None else 'None'}, "
-                f"Node ETA: {h_node_eta if h_node_eta is not None else 'None'}"
+            node_desc = (
+                f"Task Priority: {plan.landmarks[1] if plan.landmarks else 'None'}, "
+                f"Task Type: {plan.landmarks[2] if len(plan.landmarks) > 2 else 'None'}, "
+                f"Node Type: {'Waitpoint' if node_id.startswith('W') else 'Checkpoint'}, "
+                f"Wait Time: {wait_time if (wait_time is not None and wait_time >= 0) else 'None'}"
             )
 
-            # Create a node entry
-            node = {
-                "nodeId": node_id,
-                "released": (i < 3 and wait_time is not None) or (i == 0 and wait_time is None and release_node is not None),
-                "sequenceId": i * 2 + 1, # Odd sequenceId for nodes,
-                "nodeDescription": node_description,
+            # append to nodes (Starts cleanly at sequenceId = 3 matching VDA odd tracking requirements)
+            horizon_nodes.append({
+                "nodeId": node_id, "released": released_flag, "sequenceId": i * 2 + 3,
+                "nodeDescription": node_desc,
                 "nodePosition": {
-                    "x": x,
-                    "y": y,
-                    "theta": theta,
-                    "mapId": map_name,
-                    "allowedDeviationXY": 0.5,
-                    "allowedDeviationTheta": 3.1
+                    "x": x, "y": y, "theta": self.quaternion_to_euler(0, 0, z, w)[-1],
+                    "mapId": plan.map_name, "allowedDeviationXY": 0.5, "allowedDeviationTheta": 3.1
                 },
-                "actions": [
-                    {
-                        "actionType": "dock",
-                        "actionId": str(uuid.uuid4()),
-                        "actionDescription": "task priority pick_place dock_location_info.",
-                        "blockingType": "NONE",
-                        "actionParameters": action_parameters # Inserted landmark parameters
-                    }
-                ] if is_dock_node else []  # Only add actions for dock nodes
-            }
+                "actions": [{
+                    "actionType": "dock", "actionId": str(uuid.uuid4()),
+                    "actionDescription": "task priority pick_place dock_location_info.",
+                    "blockingType": "NONE", "actionParameters": [{"key": "landmark", "value": plan.landmarks}]
+                }] if is_dock else []
+            })
 
-            # append to nodes
-            horizon_nodes.append(node)
+            # Generate connecting path trajectory links (Starts cleanly at sequenceId = 4 matching VDA even tracking requirements)
+            if i < len(nodes) - 1:
+                horizon_edges.append({
+                    "edgeId": f"edge_{node_id}_to_{nodes[i+1]}", "released": released_flag,
+                    "sequenceId": i * 2 + 4, "startNodeId": node_id, "endNodeId": nodes[i+1], "actions": []
+                })
 
-            # Create an edge entry if it's not the last node
-            if i < len(merged_nodes[release_index:]) - 1:
-                next_node_id = merged_nodes[release_index + i + 1]
-                edge = {
-                    "edgeId": f"edge_{node_id}",
-                    "released": (i < 3 and wait_time is not None) or (i == 0 and wait_time is None and release_node is not None),
-                    "sequenceId": i * 2, # Even sequenceId for edges
-                    "startNodeId": node_id,
-                    "endNodeId": next_node_id,
-                    "actions": []
-                }
-                horizon_edges.append(edge)
+        return base_node, base_edge, horizon_nodes, horizon_edges
 
-        # ---------------------
-        # wait/delay analytics:
-        # ---------------------
-        # If a wait_time is provided, store it for later association with the order.
-        self.current_order_wait = wait_time
-        # --------------------
-
-        return base_node, horizon_nodes, horizon_edges
-
-
-    def build_order_msg(self, f_id, _r_id, header_id, version, manufacturer, b_node, h_nodes, h_edges, order_id, order_update_id):
-        """
-            Create the order message, insert it into the database, and publish it over MQTT.
-            Only record the order issuance if the order_id ends with '_1', which indicates the first (and true)
-            issuance instance. Subsequent updates (with _2, _3, etc.) are not recorded.
-        """
-        order_message = {
-            "headerId": header_id,  # Consider using a sequence generator for better tracking
-            "timestamp": datetime.datetime.now().isoformat(),
-            "version": version,  # Adjust version as needed
-            "manufacturer": manufacturer,
-            "serialNumber": _r_id,
-            "orderId": order_id,
-            "orderUpdateId": order_update_id,  # Can be incremented for updates
-            "zoneSetId": f_id,  # "",
-            "nodes": h_nodes,
-            "edges": h_edges
+    def build_order_msg(self, plan: RoutePlan, b_node: dict, b_edge: dict, h_nodes: list[dict], h_edges: list[dict]):
+        """Unified payload compiler. Scales across all scenarios via deterministic release boundaries."""
+        order_msg = {
+            "headerId": plan.header_id, "timestamp": datetime.datetime.now().isoformat(),
+            "version": plan.version, "manufacturer": plan.manufacturer, "serialNumber": plan.robot_id,
+            "orderId": plan.order_id, "orderUpdateId": plan.update_id, "zoneSetId": plan.fleet_id,
+            "nodes": h_nodes, "edges": h_edges
         }
 
-        # Insert new record into instant_actions for robot with the serial number.
-        self.insert_order_db(order_message)  # Save into the database
+        # Database state persistence layer update
+        self.insert_order_db(order_msg)
+        if plan.order_id.endswith("_0"): 
+            # issuance timestamp analytics independent of MQTT publishing
+            self.record_order_issuance(plan.robot_id, plan.order_id)
 
-        # Record issuance timestamp for analytics (independent of MQTT publishing).
-        # This must happen here so completion timing is always available regardless of MQTT state.
-        if order_id.endswith("_0"):
-            self.record_order_issuance(_r_id, order_id)
+        if not self.mqtt_client:
+            return
 
-        # MQTT publishing logic
-        if self.mqtt_client is not None:
-            # For non-waitpoint case, publish custom node and edge structure. only send the first node and edge as base.
-            first_node = h_nodes[0]  # Release the base
-            # Check if the first node is released
-            if not first_node.get('released', False):  # Default to False if 'released' key is not present
-                self.logger.info("First node is not released. Skipping publication.")
-            else:
+        # check release status of new base or [horizon[0]
+        first_node = h_nodes[0] 
+        if not first_node.get('released', False):
+            self.logger.info("First node is not released. Skipping publication.")
+            return
 
-                # Prepare the message for MQTT publication.
-                # Duplicate the first node with modified sequence IDs 1 first.
-                # b_node functions as a patch
-                duplicated_node_1 = b_node # first_node.copy()
-                # duplicated_node_1["sequenceId"] = 1
-                # Duplicate node with seq 3
-                duplicated_node_2 = first_node.copy()
-                duplicated_node_2["sequenceId"] = 3
-                # Create a custom self-looping edge connecting the duplicated nodes
-                custom_edge = {
-                    "edgeId": f"edge_{duplicated_node_1['nodeId']}", #"edge0",  # You can modify the edge ID as needed
-                    "released": True,
-                    "sequenceId": 2,  # Sequence ID between the two duplicated nodes
-                    "startNodeId": duplicated_node_1["nodeId"], # first_node["nodeId"],
-                    "endNodeId": duplicated_node_2["nodeId"],
-                    "actions": []
-                }
+        # Analytics Hook Trigger
+        if first_node['nodeId'].startswith('W'):
+            self.process_wait_event(plan.robot_id, plan.order_id, self.current_order_wait)
+            print(f"\033[93m 🛸 Order Wait Time Triggered: {self.current_order_wait} 🛸 \033[0m")
 
-                # If nodes exist and the first node is a waitpoint
-                if h_nodes and h_nodes[0]['nodeId'].startswith('W'):
+        # ------------------------------------------------------------------ #
+        # UNIFIED WINDOW DISPATCH PIPELINE                                   #
+        # ------------------------------------------------------------------ #
+        # Deletes legacy multi-branch scenario blocks entirely.
+        # Dynamically matches the specific release counts allocated up-front.
+        released_count = len(plan.release_nodes)
+        if len(h_nodes) >= released_count and len(h_edges) >= released_count - 1:
+            # Slices are perfectly continuous because sequence IDs and edges are pre-aligned inside create_order
+            order_msg["nodes"] = [b_node] + h_nodes[:released_count]
+            order_msg["edges"] = [b_edge] + h_edges[:released_count - 1]
+            self.logger.info(f"Trajectory window successfully packed and partitioned with width count: {released_count}.")
+        else:
+            raise ValueError(f"Insufficient trajectory geometry elements to fulfill target release allocation window ({released_count}).")
 
-                    # Here, we record the wait start event; later when the wait ends, process wait event will be called.
-                    self.process_wait_event(_r_id, order_id, self.current_order_wait)
-                    print(f"\033[93m 🛸 Order Wait Time Triggered: {self.current_order_wait} 🛸 \033[0m")
+        # Execute MQTT Transmission
+        self.logger.info("Publishing Order Message...")
+        self.logger.info(f"\033[38;5;208m{json.dumps(order_msg, indent=4)}\033[0m")
+        self.pub_order_mqtt(self.mqtt_client, order_msg)
 
-                    # Publish the first three nodes (node, waitpoint, and next checkpoint) and their respective edges
-                    if len(h_nodes) >= 3 and len(h_edges) >= 2:
-                        # Adjust the nodes and edges to send first three nodes if waitpoint is found
-                        # Step 3: Construct the rest of the order (include the next two nodes and edges)
-                        order_message["nodes"] = [duplicated_node_1, duplicated_node_2] + h_nodes[1:3]
-                        order_message["edges"] = [custom_edge] + h_edges[:2]
-                    else:
-                        raise ValueError("Not enough nodes or edges to publish the required three nodes and edges.")
-                else:
-                    # Step 3: Update the order message with the duplicated nodes and custom edge
-                    order_message["nodes"] = [duplicated_node_1, duplicated_node_2]  # Two nodes with different sequence IDs
-                    order_message["edges"] = [custom_edge]  # One self-looping edge
 
-                # show the order message in a fancy way for debugging
-                self.logger.info("Publishing Order Message...")
-                # self.logger.info(json.dumps(order_message, indent=4)) # pretty_message = json.dumps(order_message, indent=4, sort_keys=True)
 
-                self.pub_order_mqtt(self.mqtt_client, order_message)
+
 
 
     def insert_order_db(self, order_message):
@@ -1177,29 +1096,54 @@ if __name__ == "__main__":
     wait_itinerary = [[1.5, 2.5, 0, 1], [2.5, 3.5, 0, 1]]       # Waitpoint positions (x, y, z, w)
     landmark = [20.0, 'high', 'transport', 'C2', 'C3']  # Sample landmarks
 
-    # Create nodes and edges
-    b_node, h_nodes, h_edges = order_publisher.create_order(checkpoints, waitpoints, agv_itinerary, wait_itinerary, landmark)
-
-    # Generate order message
     fleet_id = "kullar"
     robot_serial_number = "AGV-001"
     header_id = 1
     version = "v2"
     manufacturer = "birfen"
+    order_id = str(uuid.uuid4())
+    order_update_id = 0
 
-    # Build the order message and save to the database
-    order_publisher.build_order_msg(
-        f_id=fleet_id,
-        _r_id=robot_serial_number,
-        header_id=header_id,
+    plan = RoutePlan(
+        fleet_id=fleet_id,
+        robot_id=robot_serial_number,
         version=version,
         manufacturer=manufacturer,
-        b_node=b_node,
-        h_nodes=h_nodes,
-        h_edges=h_edges,
-        order_id=str(uuid.uuid4()),
-        order_update_id=0
+        header_id=header_id,
+        order_id=order_id,
+        update_id=order_update_id,
+        map_name="map",
+        checkp_nodes=checkpoints,
+        checkp_poses=agv_itinerary,
+        waitp_nodes=waitpoints,
+        waitp_poses=wait_itinerary,
+        landmarks=landmark,
+        release_nodes=['C2'],
+        release_type=""
     )
+
+    # Union
+    merged_nodes, merged_poses = order_publisher._merge_trajectory_itinerary(plan)
+    
+    # Reconstructive Trajectory Stitching
+    active_nodes, active_poses = [], []
+    consumed_indices = []
+
+    for target in plan.release_nodes:
+        idx = merged_nodes.index(target)
+        consumed_indices.append(idx)
+        active_nodes.append(merged_nodes[idx])
+        active_poses.append(merged_poses[idx])
+
+    max_idx = max(consumed_indices)
+    active_nodes.extend(merged_nodes[max_idx + 1:])
+    active_poses.extend(merged_poses[max_idx + 1:])
+
+    # Create nodes and edges
+    b_node, b_edge, h_nodes, h_edges = order_publisher.create_order(plan, active_nodes, active_poses)
+
+    # Build the order message and save to the database
+    order_publisher.build_order_msg(plan, b_node, b_edge, h_nodes, h_edges)
 
     # Fetch orders for a specific fleet and serial number
     orders = order_publisher.fetch_data(fleet_id,robot_serial_number,manufacturer)

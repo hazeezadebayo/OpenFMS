@@ -76,19 +76,19 @@ SCENARIOS = {
             "[C4(C) - W4(W)]",
             "[C8(C) - W8(W)]",      
             # # | |
-            "[C11(S) - C5(C) - C6(C) - C7(C) - C8(C) - C12(S)]",
             "[C9(S) - C1(C) - C2(C) - C3(C) - C4(C) - C10(S)]", 
+            "[C11(S) - C5(C) - C6(C) - C7(C) - C8(C) - C12(S)]",       
             # # | | 
-            "[C21(H) - C13(C) - C14(C) - C15(C) - C16(C) - C22(S)]",
-            "[C23(H) - C17(C) - C18(C) - C19(C) - C20(C) - C24(CH)]",
+            "[C21(S) - C13(C) - C14(C) - C15(C) - C16(C) - C22(S)]",
+            "[C23(S) - C17(C) - C18(C) - C19(C) - C20(C) - C24(S)]",
             # # --- --- 
-            "[C26(S) - C2(C) - C6(C) - C14(C) - C18(C) - C29(S)]",       
+            "[C26(H) - C2(C) - C6(C) - C14(C) - C18(C) - C29(H)]",       
             "[C2(C) - W2(W)]",
             "[C6(C) - W6(W)]",
             "[C14(C) - W14(W)]",
             "[C18(C) - W18(W)]",
             # # --- ---  
-            "[C27(S) - C3(C) - C7(C) - C15(C) - C19(C) - C30(S)]",        
+            "[C27(H) - C3(C) - C7(C) - C15(C) - C19(C) - C30(H)]",        
             "[C3(C) - W3(W)]",
             "[C7(C) - W7(W)]",
             "[C15(C) - W15(W)]",
@@ -103,10 +103,17 @@ SCENARIOS = {
             "[C16(C) - W16(W)]",
             # # --- ---  
         ],
-        "num_robots": 2,
+        "num_robots": 8,
         "tasks": [
             {"delay": 2, "robot_id": "R01", "from": "C11", "to": "C12", "type": "transport", "priority": "high", "payload": 5, "sent": False},
-            {"delay": 8, "robot_id": "R02", "from": "C9", "to": "C10", "type": "transport", "priority": "low", "payload": 5, "sent": False}
+            {"delay": 8, "robot_id": "R02", "from": "C12", "to": "C11", "type": "transport", "priority": "low", "payload": 5, "sent": False},
+            {"delay": 14, "robot_id": "R03", "from": "C9", "to": "C10", "type": "transport", "priority": "high", "payload": 5, "sent": False},
+            {"delay": 20, "robot_id": "R04", "from": "C10", "to": "C9", "type": "transport", "priority": "low", "payload": 5, "sent": False},
+
+            {"delay": 26, "robot_id": "R05", "from": "C21", "to": "C22", "type": "transport", "priority": "high", "payload": 5, "sent": False},
+            {"delay": 32, "robot_id": "R06", "from": "C22", "to": "C21", "type": "transport", "priority": "low", "payload": 5, "sent": False},
+            {"delay": 38, "robot_id": "R07", "from": "C23", "to": "C24", "type": "transport", "priority": "high", "payload": 5, "sent": False},
+            {"delay": 44, "robot_id": "R08", "from": "C24", "to": "C23", "type": "transport", "priority": "low", "payload": 5, "sent": False},
         ]
     },
 
@@ -118,8 +125,8 @@ SCENARIOS = {
 # ────────────────────────────────────────────────
 
 def get_fleet_config(num_robots):
-    # Ensure we always have a bit of 'breathing room' for swaps
-    num_station_docks = math.ceil(num_robots * 1.2) + 2
+    # Ensure we have a healthy pool of station docks for sampling
+    num_station_docks = math.ceil(num_robots * 1.5) + 5
     
     # Standard industrial charging ratio (1 charger per 5 robots)
     num_charge_docks = max(1, math.ceil(num_robots / 5))
@@ -127,9 +134,15 @@ def get_fleet_config(num_robots):
     # Waitpoints are the 'pockets' for robots to pull into during conflicts
     num_waitpoints = math.ceil(num_robots * 0.5) + 2
     
-    # 1.3 provides good redundancy without making the graph 
-    # overly complex for the O(K) find_nearest_node search.
-    density_factor = 1.3
+    # Scale density factor with fleet size to ensure valid graph generation
+    if num_robots >= 50:
+        density_factor = 20.0
+    elif num_robots >= 20:
+        density_factor = 8.0
+    elif num_robots >= 10:
+        density_factor = 3.0
+    else:
+        density_factor = 1.3
     
     return {
         "num_station_docks": num_station_docks,
@@ -199,7 +212,7 @@ if __name__ == "__main__":
                         attempt += 1
                         if attempt > 20: 
                             print("CRITICAL: Could not generate valid graph. Adjust density.")
-                            break
+                            sys.exit(1)
             except ValueError:
                 print(f"❌ Error: Invalid format '{mode}'. Use N followed by a number (e.g., N25).")
                 sys.exit(1)
@@ -228,8 +241,10 @@ if __name__ == "__main__":
         print(f"Applying Mutex Groups: {SCENARIOS[mode]['mutex_groups']}")
         fm.schedule_handler.traffic_handler.mutex_groups = SCENARIOS[mode]["mutex_groups"]
 
-    fm.start_main_loop_thread()
-    time.sleep(5)
+    # FmInterface is the source: we own the single thread.
+    # DO NOT start a background loop — run_cycle() is called below inside
+    # the scenario loop so robot-management and task-dispatch share one thread.
+    time.sleep(5)  # brief warmup for MQTT/state to populate
 
     start_time = time.time()
     task_trigger_time = 5 
@@ -274,7 +289,8 @@ if __name__ == "__main__":
             current_priority = random.choice(priorities)
             
             # 3. Task Selection Logic
-            if i % 5 == 0 and len(charge_docks) > 0:
+            # Set to a threshold above our current test limit (N50) to ensure purely transport tasks
+            if i >= 60 and i % 5 == 0 and len(charge_docks) > 0:
                 # CHARGE TASK: from == to
                 dock = charge_docks.pop(0)
                 tasks.append({
@@ -290,9 +306,12 @@ if __name__ == "__main__":
                 print(f"[Task Gen] {robot_id} ({current_priority.upper()}): Charging at {dock}")
             
             elif len(station_docks) >= 2:
-                # TRANSPORT TASK: Unique Start and unique End
-                start_node = station_docks.pop(0)
-                end_node = station_docks.pop(0)
+                # # TRANSPORT TASK: Unique Start and unique End
+                # start_node = station_docks.pop(0)
+                # end_node = station_docks.pop(0)
+                # TRANSPORT TASK: Unique Start and unique End for this specific task
+                # Using random.sample instead of pop(0) to support high-N without dock depletion
+                start_node, end_node = random.sample(station_docks, 2)
                 tasks.append({
                     "delay": i * 5,
                     "robot_id": robot_id,
@@ -345,7 +364,12 @@ if __name__ == "__main__":
                     )
                     t["sent"] = True
 
-            time.sleep(1)
+            # ── Single-thread fleet management ─────────────────────────────
+            # run_cycle() manages all robots for one full pass then returns.
+            # This keeps task-dispatch and robot-management on the same thread.
+            fm.run_cycle()
+            # ───────────────────────────────────────────────────────────────
+
 
     except KeyboardInterrupt:
         print("\nSimulation stopped by user.")

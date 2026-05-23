@@ -190,10 +190,10 @@ class Robot():
 
         # wether or not to use dynamic publisher:
         # Start the dynamic publishing loop in a dedicated thread.
-        # threading.Thread(target=self.dynamic_publish_loop, daemon=True).start()
+        threading.Thread(target=self.dynamic_publish_loop, daemon=True).start()
 
         # Timers for publishing state and factsheet
-        self.create_timer(0.99, self.publish_msg)  # Publish every 1 second
+        # self.create_timer(0.99, self.publish_msg)  # Publish every 1 second
 
         # Run MQTT client loop
         # self.mqtt_client.loop_start()

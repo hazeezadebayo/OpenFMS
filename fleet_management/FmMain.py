@@ -145,21 +145,16 @@ class FmMain():
 
         # Default interval for the timer in seconds
         self.terminal_gui_refresh_interval = 70.0
-        self.timer_interval = 35.0
+        self.timer_interval = 70.0
 
         # initialization for thread
         self.timer_thread = None
         self.timer_thread_running = threading.Event()
         self.lock = threading.RLock()  # Lock to ensure one process finishes before another starts
 
-        # Only start the timer thread if this script is run directly
-        if __name__ == "__main__":
-            # terminal based gui
-            self.start_timer_thread()
-            self.main_loop()
-        else:
-            # if API call, then start main loop in its own thread
-            self.start_main_loop_thread()
+        # Do NOT auto-start any loop here.
+        # When run directly (FmMain is source): __name__=="__main__" block below starts it.
+        # When imported by FmInterface: FmInterface owns the single thread and calls run_cycle().
 
     # Define the function to start the main loop thread
     def start_main_loop_thread(self):
@@ -203,36 +198,53 @@ class FmMain():
                 if i > (2 * self.terminal_gui_refresh_interval):
                     i = 0
 
+    def run_cycle(self):
+        """
+        Execute one robot-management cycle for the entire fleet.
+
+        This is the core logic that was previously embedded inside
+        main_loop's while-True body.  Extracting it here allows two
+        distinct callers:
+
+          - main_loop()     → wraps it in its own while-True (FmMain standalone)
+          - FmInterface     → calls it directly inside the scenario loop
+                              so both robot-management AND task-dispatch
+                              happen inside a single thread.
+        """
+        if not (self.fleetnames and self.serial_numbers and self.fleetname != ''):
+            # Log viz to confirm why it's skipping
+            # self.schedule_handler.traffic_handler.task_handler.visualization_handler.terminal_log_visualization(
+            #     f"FmMain.run_cycle skipping: fleetnames={self.fleetnames}, serials={self.serial_numbers}, current_fleet={self.fleetname}",
+            #     "FmMain", "run_cycle", "info")
+            return  # not ready yet; caller's loop will retry
+
+        with self.lock:
+            time.sleep(4.0)
+            for r_id in self.serial_numbers:
+                self.schedule_handler.manage_robot(self.fleetname, r_id, self.manufacturer, self.version)
+
+            # Issue terminal traffic control summary once per cycle
+            traffic_dict = getattr(self.schedule_handler.traffic_handler, 'traffic_control_dict', None)
+            if traffic_dict:
+                colored_traffic = ", ".join([f"\033[96m{r}\033[0m: \033[93m{n}\033[0m" for r, n in traffic_dict.items()]) if isinstance(traffic_dict, dict) else traffic_dict
+                self.schedule_handler.traffic_handler.task_handler.visualization_handler.terminal_log_visualization(
+                    f"Traffic Control: {{{colored_traffic}}}.",
+                    "FmMain","run_cycle","critical")
+
+            # Issue terminal redraw once per cycle
+            self.schedule_handler.traffic_handler.task_handler.visualization_handler.terminal_graph_visualization()
+
     def main_loop(self):
-        """ Main loop runs wether accessed from terminal or api to manage the robot and fleet operations. """
+        """
+        Standalone fleet-management loop (used when FmMain is the source).
+        Calls run_cycle() on every timer tick.
+        """
         try:
-            
             i = 0
             while True:
                 i += 1
-                # print("f:", self.fleetnames, "-", self.fleetname, " r:", self.serial_numbers)
-                # Perform operations every x iterations if fleet and robot IDs are available
-                if i % self.timer_interval == 0 and self.fleetnames and \
-                    self.serial_numbers and self.fleetname != '':
-                    # Load robot traffic manager display callback
-                    with self.lock:  # Ensure no other operation interferes     
-                        time.sleep(2.0) 
-                        for r_id in self.serial_numbers:
-                            self.schedule_handler.manage_robot(self.fleetname, r_id, self.manufacturer, self.version)
-
-                        # Issue terminal traffic control summary once per cycle instead of per-robot
-                        traffic_dict = getattr(self.schedule_handler.traffic_handler, 'traffic_control_dict', None)
-                        if traffic_dict:
-                            colored_traffic = ", ".join([f"\033[96m{r}\033[0m: \033[93m{n}\033[0m" for r, n in traffic_dict.items()]) if isinstance(traffic_dict, dict) else traffic_dict
-                            self.schedule_handler.traffic_handler.task_handler.visualization_handler.terminal_log_visualization(
-                                f"Traffic Control: {{{colored_traffic}}}.",
-                                "FmMain",
-                                "main_loop",
-                                "critical"
-                            )
-
-                        # Issue terminal redraw once per cycle instead of per-robot
-                        self.schedule_handler.traffic_handler.task_handler.visualization_handler.terminal_graph_visualization()
+                if i % self.timer_interval == 0:
+                    self.run_cycle()
         except KeyboardInterrupt:
             # log viz:
             self.schedule_handler.traffic_handler.task_handler.visualization_handler.terminal_log_visualization(
@@ -985,7 +997,11 @@ class FmMain():
 # ---------------------------------------------- #
 
 if __name__ == "__main__":
-    FmMain()
+    fm = FmMain()
+    # FmMain is the source: start the interactive timer GUI in a background
+    # thread, then run the management loop on the main thread.
+    fm.start_timer_thread()
+    fm.main_loop()
 
 
 

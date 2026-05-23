@@ -58,8 +58,9 @@ class VisualizationSubscriber:
             return logger
 
         # ─── Directory setup ────────────────────────────────────────
-        # logs_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "logs")
-        logs_dir = os.path.join(os.getcwd(), "logs")
+        # Robust path resolution to ensure logs volume mapping is found in Docker
+        root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        logs_dir = os.path.join(root_dir, "logs")
         os.makedirs(logs_dir, exist_ok=True)
         log_file_path = os.path.join(logs_dir, "FmLogHandler.log")
 
@@ -610,24 +611,53 @@ class VisualizationSubscriber:
                 }
 
         # ────────────────────────────────────────────────
-        # ─── Terminal size ───
-        try:
-            term_size = shutil.get_terminal_size(fallback=(100, 30))
-            term_w, term_h = term_size.columns, term_size.lines
-        except:
-            term_w, term_h = 100, 30
+        # ─── True Coordinate Grid Scaling ───
+        # We output to a file (live_dashboard.txt). Use a generous width to avoid a "crumbled" map.
+        term_w = 140
+        cell_width = 5
+        
+        # We dynamically center based on the physical bounding box to maximize resolution.
+        # Forcing absolute (0,0) to be the visual center artificially doubles the required
+        # canvas size (since all nodes are in one quadrant), which squashes the nodes
+        # together and hides the edges.
+        center_x = (min_x + max_x) / 2.0
+        center_y = (min_y + max_y) / 2.0
+        
+        W_phy = max(max_x - min_x, 1.0)
+        H_phy = max(max_y - min_y, 1.0)
+        
+        # We want to fit W_phy into (term_w // cell_width) cells.
+        max_grid_width = (term_w // cell_width) - 2
+        
+        # A cell of 5 characters wide has a visual aspect ratio of 5 * 0.5 = 2.5.
+        # To maintain isotropic mapping, scale_y would be scale_x * 2.5.
+        # We use a smaller factor (1.2) to shrink the map vertically as requested.
+        aspect_ratio_factor = 1.7
+        scale_x = max_grid_width / W_phy
+        scale_y = scale_x * aspect_ratio_factor
+        
+        target_grid_height = int(H_phy * scale_y) + 2
+        
+        # Enforce reasonable bounds: if too tall, scale everything down.
+        if target_grid_height > 60:
+            scale_y = 58 / H_phy
+            scale_x = scale_y / aspect_ratio_factor
+            target_grid_height = 60
+            
+        grid_width = int(W_phy * scale_x) + 3
+        grid_height = max(15, target_grid_height)
 
-        grid_width  = max(20, min(100, term_w // 5))
-        grid_height = max(16, min(40, term_h // 2))
-        cell_width  = 5  # Fixed cell width for more compact visual
-
-        if term_w < 90:
-            cell_width = 4
-
-        def normalize(val, min_val, max_val, grid_size):
-            if max_val <= min_val:
-                return grid_size // 2
-            return int((val - min_val) / (max_val - min_val) * (grid_size - 1))
+        def map_to_grid(x, y):
+            # Map physical (x,y) to grid (gx, gy)
+            # Center of grid is (grid_width//2, grid_height//2)
+            # Y is inverted (center_y - y) because terminal line 0 is the top.
+            gx = int((x - center_x) * scale_x) + grid_width // 2
+            gy = int((center_y - y) * scale_y) + grid_height // 2
+            
+            # Clamp to grid bounds
+            gx = max(0, min(grid_width - 1, gx))
+            gy = max(0, min(grid_height - 1, gy))
+            return gx, gy
 
         grid = [[' ' * cell_width for _ in range(grid_width)] for _ in range(grid_height)]
         occupied = set()
@@ -637,8 +667,25 @@ class VisualizationSubscriber:
         active_horizons = getattr(self, 'active_horizons', {})
 
         for node, (x, y) in node_positions.items():
-            gx = normalize(x, min_x, max_x, grid_width)
-            gy = normalize(y, min_y, max_y, grid_height)
+            gx, gy = map_to_grid(x, y)
+            
+            # Collision resolution: if multiple nodes map to the same cell, push outwards
+            orig_gx, orig_gy = gx, gy
+            radius = 1
+            while (gx, gy) in occupied and radius < 6:
+                found = False
+                # Simple spiral/box search
+                for dy in range(-radius, radius + 1):
+                    for dx in range(-radius, radius + 1):
+                        nx, ny = orig_gx + dx, orig_gy + dy
+                        if 0 <= nx < grid_width and 0 <= ny < grid_height:
+                            if (nx, ny) not in occupied:
+                                gx, gy = nx, ny
+                                found = True
+                                break
+                    if found: break
+                if not found:
+                    radius += 1
 
             if 0 <= gx < grid_width and 0 <= gy < grid_height:
                 occupied.add((gx, gy))
@@ -668,6 +715,13 @@ class VisualizationSubscriber:
                                 break
                 
                 label = str(node)[:cell_width].center(cell_width)
+                if str(node).startswith('W'):
+                    node_str = str(node)
+                    # Use unicode modifiers/subscripts to simulate "half size"
+                    subscripts = str.maketrans("0123456789", "₀₁₂₃₄₅₆₇₈₉")
+                    # ʷ is a modifier w, often looks smaller
+                    small_label = "ʷ" + node_str[1:].translate(subscripts)
+                    label = small_label.center(cell_width)
                 if display_color:
                     # Place the colored string correctly into the cell list without breaking terminal spacing
                     grid[gy][gx] = f"{display_color}{label}{reset_color}"
@@ -700,57 +754,36 @@ class VisualizationSubscriber:
                 return
             
             # Pure vertical line explicit bypass
-            if abs(gx1 - gx2) <= 1:
+            if gx1 == gx2:
                 ymin, ymax = min(gy1, gy2), max(gy1, gy2)
                 if ymax - ymin > 1:
                     for y in range(ymin + 1, ymax):
                         if 0 <= gx1 < grid_width and 0 <= y < grid_height:
                             if not grid[y][gx1].strip():
-                                grid[y][gx1] = '│'.center(cell_width)
+                                grid[y][gx1] = '.'.center(cell_width)
                 return
             
             # Pure horizontal line explicit bypass
-            if abs(gy1 - gy2) <= 1:
+            if gy1 == gy2:
                 xmin, xmax = min(gx1, gx2), max(gx1, gx2)
                 if xmax - xmin > 1:
                     for x in range(xmin + 1, xmax):
                         if 0 <= x < grid_width and 0 <= gy1 < grid_height:
                             if not grid[gy1][x].strip():
-                                grid[gy1][x] = '─'.center(cell_width)
+                                grid[gy1][x] = '.'.center(cell_width)
                 return
                 
             pts = bresenham(gx1, gy1, gx2, gy2)
             if len(pts) < 3:
                 return
-            # Lowering the minimum step to 1 ensures short vertical segments are explicitly drawn 
-            # instead of being skipped by a mandatory stride of 2.
-            step = max(1, len(pts) // 18)
+            
             for i, (px, py) in enumerate(pts):
-                if i % step != 0:
-                    continue
                 if not (0 <= px < grid_width and 0 <= py < grid_height):
                     continue
                 if grid[py][px].strip():
                     continue
-                ch = '·'
-                if 0 < i < len(pts)-1:
-                    px_prev, py_prev = pts[i-1]
-                    px_next, py_next = pts[i+1]
-                    dx = px_next - px_prev
-                    dy = py_next - py_prev
-                    
-                    # Terminal cells are roughly 2x as tall as they are wide.
-                    # Because dx is multiplied by cell_width, we must adjust threshold logic
-                    # so vertical lines don't get misidentified as diagonals.
-                    if abs(dx) > abs(dy) * 3:
-                        ch = '─'
-                    elif abs(dy) * 1.5 >= abs(dx): # Looser vertical check
-                        ch = '│'
-                    elif dx * dy > 0:
-                        ch = '/'
-                    else:
-                        ch = '\\'
-                grid[py][px] = ch.center(cell_width)
+                # Just use dots for all edges
+                grid[py][px] = '.'.center(cell_width)
 
         for node, edges in graph.items():
             if node not in node_grid_positions:
@@ -764,8 +797,7 @@ class VisualizationSubscriber:
         # ─── Place robots ─── improved visibility
         for robot, pos in robot_positions.items():
             rx, ry = pos['x'], pos['y']
-            gx = normalize(rx, min_x, max_x, grid_width)
-            gy = normalize(ry, min_y, max_y, grid_height)
+            gx, gy = map_to_grid(rx, ry)
 
             dx = dy = 0
             orig_gx, orig_gy = gx, gy
@@ -819,7 +851,9 @@ class VisualizationSubscriber:
 
         # --- Append Analytics Summary (if available) ---
         import glob
-        logs_dir = os.path.join(os.getcwd(), "logs")
+        # Robust path resolution
+        root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        logs_dir = os.path.join(root_dir, "logs")
         os.makedirs(logs_dir, exist_ok=True)
         
         # Use absolute docker mapping first, fallback to relative logic
