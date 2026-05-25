@@ -947,6 +947,82 @@ class VisualizationSubscriber:
 
     # # --------------------------------------------------------------------------------------------
 
+    def upsert_analytics_snapshot(self, logs_dir, log_messages):
+        """
+        Takes raw analytics log messages and surgically updates the result_snapshot.txt
+        by updating existing keys or appending new ones, avoiding duplication or erasure.
+        """
+        import os
+        import logging
+        logger = logging.getLogger(__name__)
+
+        final_filename = os.path.join(logs_dir, "result_snapshot.txt")
+        temp_filename  = os.path.join(logs_dir, ".temp_result_snapshot.txt")
+
+        # Smart Upsert Logic
+        existing_lines = []
+        if os.path.exists(final_filename):
+            with open(final_filename, "r", encoding="utf-8") as f:
+                existing_lines = f.read().splitlines()
+
+        def get_key(line):
+            if line.startswith("Robot ID:"):
+                parts = line.split("Average Execution Duration:")
+                return parts[0] + "Average Execution Duration:" if len(parts) > 1 else line
+            if line.startswith("timestamp [min]:"):
+                parts = line.split(",")
+                return parts[0] + "," if len(parts) > 1 else line
+            if "avg per robot latency" in line:
+                return "avg per robot latency"
+            if "overall avg latency" in line:
+                return "overall avg latency"
+            if "avg per robot Idle Time" in line:
+                return "avg per robot Idle Time"
+            if line.startswith("number of transport Orders fullfilled by robot"):
+                parts = line.split(":")
+                return parts[0] + ":"
+            if ":" in line:
+                return line.split(":")[0] + ":"
+            return line
+
+        line_map = {}
+        ordered_keys = []
+        
+        # Load existing lines
+        for line in existing_lines:
+            if not line.strip(): continue
+            key = get_key(line)
+            if key not in line_map:
+                ordered_keys.append(key)
+            line_map[key] = line
+
+        # Upsert new lines
+        for msg in log_messages:
+            if not msg.strip(): continue
+            key = get_key(msg)
+            if key not in line_map:
+                ordered_keys.append(key)
+            line_map[key] = msg
+
+        # Write updated state
+        with open(temp_filename, "w", encoding="utf-8") as f:
+            for key in ordered_keys:
+                f.write(line_map[key] + "\n")
+
+        # Ensure host user can delete this file without sudo
+        try:
+            os.chmod(temp_filename, 0o666)
+        except OSError:
+            pass
+
+        # Atomically swap: previous snapshot replaced by current full state
+        os.rename(temp_filename, final_filename)
+
+        logger.debug(f"✅ Results written to: {final_filename}")
+        logger.debug(f"   (Access on host at: logs/result_snapshot.txt)")
+
+    # # --------------------------------------------------------------------------------------------
+
 # Example usage
 if __name__ == "__main__":
 

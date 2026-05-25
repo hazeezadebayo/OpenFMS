@@ -271,7 +271,7 @@ class StateSubscriber:
         data["buckets"][bucket_index]["sum"] += msg_latency
         data["buckets"][bucket_index]["count"] += 1
 
-        self.logger.info("Recorded latency for robot %s in bucket %d: %.2f sec", robot_id, bucket_index, msg_latency)
+        # self.logger.info("Recorded latency for robot %s in bucket %d: %.2f sec", robot_id, bucket_index, msg_latency)
 
     def compute_robot_avg_latency(self, show_plot=True):
         """

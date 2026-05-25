@@ -814,28 +814,8 @@ class FmScheduleHandler():
             except OSError:
                 pass
 
-            # Always write to a single fixed file — full global state on every call.
-            # _shared_analytics_data is a class-level accumulator, so this file
-            # always contains ALL robots, not just the one that triggered the event.
-            final_filename = os.path.join(logs_dir, "result_snapshot.txt")
-            temp_filename  = os.path.join(logs_dir, ".temp_result_snapshot.txt")
-
-            # 1. Write full state into a temporary file first
-            with open(temp_filename, "w") as f:
-                for msg in log_messages:
-                    f.write(msg + "\n")
-
-            # 2. Ensure host user can delete this file without sudo
-            try:
-                os.chmod(temp_filename, 0o666)
-            except OSError:
-                pass
-
-            # 3. Atomically swap: previous snapshot replaced by current full state
-            os.rename(temp_filename, final_filename)
-
-            logger.debug(f"✅ Results written to: {final_filename}")
-            logger.debug(f"   (Access on host at: logs/result_snapshot.txt)")
+            # Delegate to the Visualization Handler for smart upsert logic
+            self.traffic_handler.task_handler.visualization_handler.upsert_analytics_snapshot(logs_dir, log_messages)
 
 
 # ────────────────────────────────────────────────
