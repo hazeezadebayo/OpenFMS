@@ -61,7 +61,6 @@ services:
     depends_on:
       - mqtt
       - db
-      - manager
     environment:
       MQTT_BROKER: mqtt
       MQTT_PORT: 1883

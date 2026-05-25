@@ -6,9 +6,85 @@ from psycopg2 import sql
 import psycopg2, psycopg2.extras
 from pathlib import Path
 
-import matplotlib.pyplot as plt
-import matplotlib.patches as patches
-import shutil
+
+def setup_global_logging(output_to_screen=True, log_level='info'):
+    root_logger = logging.getLogger()
+    
+    level_map = {
+        "debug": logging.DEBUG,
+        "info": logging.INFO,
+        "warn": logging.WARNING,
+        "error": logging.ERROR,
+        "critical": logging.CRITICAL,
+    }
+    
+    root_logger.setLevel(logging.DEBUG)
+
+    if root_logger.hasHandlers():
+        root_logger.handlers.clear()
+
+    # ─── Directory setup ────────────────────────────────────────
+    root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    logs_dir = os.path.join(root_dir, "logs")
+    os.makedirs(logs_dir, exist_ok=True)
+    log_file_path = os.path.join(logs_dir, "FmLogHandler.log")
+    file_mode = 'a' if os.path.exists(log_file_path) else 'w'
+
+    # Pre-create the file if it doesn't exist so we can immediately chmod it
+    if not os.path.exists(log_file_path):
+        open(log_file_path, 'a').close()
+        
+    try:
+        os.chmod(log_file_path, 0o666)
+    except Exception:
+        pass
+
+    # ─── File handler ───────────────────────────────────────────
+    file_handler = logging.FileHandler(log_file_path, mode=file_mode)
+    file_handler.setLevel(logging.INFO)
+    file_handler.setFormatter(
+        logging.Formatter("[%(levelname)s] [%(asctime)s] %(name)s: %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
+    )
+    root_logger.addHandler(file_handler)
+
+    # ─── Console handler with beautiful custom format ──────────
+    if output_to_screen:
+        console_handler = logging.StreamHandler(sys.stdout)
+        console_handler.setLevel(level_map.get(log_level.lower(), logging.INFO))
+        
+        class CustomConsoleFormatter(logging.Formatter):
+            def format(self, record):
+                log_colors = {
+                    "DEBUG":    "\033[36m",      # Cyan
+                    "INFO":     "\033[32m",      # Green
+                    "WARNING":  "\033[33m",      # Yellow
+                    "ERROR":    "\033[31m",      # Red
+                    "CRITICAL": "\033[35m",      # Magenta
+                }
+                color = log_colors.get(record.levelname, "\033[37m")
+                reset = "\033[0m"
+                class_color = "\033[93m"
+                
+                timestamp = self.formatTime(record, "%Y-%m-%d %H:%M:%S")
+                
+                module_name = record.name.split('.')[-1]
+                func_name = record.funcName
+                
+                formatted = (
+                    f"{color}[{record.levelname:<6}]{reset} "
+                    f"\033[36m[{timestamp}]{reset} "
+                    f"{class_color}{module_name}{reset}"
+                    f".\033[1m{func_name:<20}{reset} "
+                    f"- {record.getMessage()}"
+                )
+                return formatted
+
+        console_handler.setFormatter(CustomConsoleFormatter())
+        root_logger.addHandler(console_handler)
+
+
+logger = logging.getLogger(__name__)
+
 
 class VisualizationSubscriber:
     """ Visualization handler """
@@ -36,9 +112,9 @@ class VisualizationSubscriber:
         self.output_to_screen = output_log
         self.output_to_file = output_log
 
-        # logger; here we use a simple print-based one for clarity.
-        self.logger_name = "VisualizationSubscriber"
-        self.logger = self._get_logger(self.logger_name, output_log)
+        # Set up global logging once here
+        setup_global_logging(self.output_to_screen, self.log_level)
+        self.logger = logger
 
         if self.db_conn:
             self.create_database(dbname)
@@ -46,67 +122,18 @@ class VisualizationSubscriber:
 
     # --------------------------------------------------------------------------------------------
 
-    def _get_logger(self, logger_name, output_log=True):
-        logger = logging.getLogger(logger_name)
-        logger.setLevel(logging.INFO)
-
-        # Avoid duplicate handlers
-        if logger.hasHandlers():
-            logger.handlers.clear()           # ← safest in dynamic/repeated init scenarios
-
-        if not output_log:
-            return logger
-
-        # ─── Directory setup ────────────────────────────────────────
-        # Robust path resolution to ensure logs volume mapping is found in Docker
-        root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        logs_dir = os.path.join(root_dir, "logs")
-        os.makedirs(logs_dir, exist_ok=True)
-        log_file_path = os.path.join(logs_dir, "FmLogHandler.log")
-
-        file_mode = 'a' if os.path.exists(log_file_path) else 'w'
-
-        # ─── File handler ───────────────────────────────────────────
-        file_handler = logging.FileHandler(log_file_path, mode=file_mode)
-        file_handler.setLevel(logging.INFO)
-        file_handler.setFormatter(
-            logging.Formatter(
-                "[%(levelname)s] [%(asctime)s] %(name)s: %(message)s",
-                datefmt="%Y-%m-%d %H:%M:%S"
-            )
-        )
-        logger.addHandler(file_handler)
-
-        # ─── Console handler with beautiful custom format ──────────
-        if self.output_to_screen:
-            console_handler = logging.StreamHandler(sys.stdout)
-            console_handler.setLevel(logging.INFO)
-
-            # Custom formatter – no level & timestamp here (we'll add them manually when needed)
-            class CustomConsoleFormatter(logging.Formatter):
-                def format(self, record):
-                    # Use the standard formatter to handle %s replacement etc.
-                    return super().format(record)
-
-            console_handler.setFormatter(CustomConsoleFormatter())
-
-            logger.addHandler(console_handler)
-
-        # Optional: log where files go (only once, or under debug)
-        # logger.debug(f"Logs written to: {log_file_path}")
-
-        return logger
-
-    # --------------------------------------------------------------------------------------------
 
     # TODO! call close from FmMain!
     def close(self):
         """Ensure the log file is properly closed."""
-        for handler in self.logger.handlers[:]:
+        root_logger = logging.getLogger()
+        for handler in root_logger.handlers[:]:
             handler.close()
-            self.logger.removeHandler(handler)
+            root_logger.removeHandler(handler)
+
 
     # --------------------------------------------------------------------------------------------
+
 
     def fm_add_landmark_request(self, f_id, map_name, loc_type, loc_pose, loc_id, loc_neighbor_ids, config_file_path, graph=None, itinerary=None):
         """ validate new landmark to be added to graph """
@@ -152,13 +179,11 @@ class VisualizationSubscriber:
             for neighbor in edges:
                 # Validate the neighbor ID format
                 if not pattern.match(neighbor):
-                    print("okay1 ", neighbor)
                     self.logger.error("Invalid element in Neighbors field: %s.", neighbor)
                     return
 
                 # Check if the neighbor is in `curr_landmarks`
                 if neighbor not in curr_landmarks:
-                    print("okay2 ", neighbor)
                     self.logger.error("Element %s in 'Neighbors' field not a landmark.", neighbor)
                     return
 
@@ -170,7 +195,9 @@ class VisualizationSubscriber:
 
             self.add_location_db_cmd(f_id, map_name, loc_type, loc_pose, loc_id, edge_list, config_file_path, graph, itinerary)
 
+
     # --------------------------------------------------------------------------------------------
+
 
     def add_location_db_cmd(self, f_id, map_name, node_type, node_pose, node_id, edge_list, config_file_path=None, graph=None, itinerary=None):
         """ add new landmark to be added to graph """
@@ -212,7 +239,9 @@ class VisualizationSubscriber:
 
         self.logger.info("landmark co_ord: x %s, y %s, z %s, w %s added successfully! yaml file updated!", x, y, z, w)
 
+
     # --------------------------------------------------------------------------------------------
+
 
     def add_node_and_edges(self, node, edges, graph=None):
         """ update node and edge list """
@@ -248,6 +277,7 @@ class VisualizationSubscriber:
                     graph[neighbor].append([node, cost])
         return graph
 
+
     # --------------------------------------------------------------------------------------------
 
     def fm_delete_landmark_request(self, f_id, loc_id, config_file_path=None, graph=None, itinerary=None):
@@ -280,6 +310,7 @@ class VisualizationSubscriber:
 
         # Update the 'nodes' to include the recently added node
         self.dump_to_yaml(graph, itinerary, config_file_path)
+
 
     # --------------------------------------------------------------------------------------------
     # TODO
@@ -319,8 +350,8 @@ class VisualizationSubscriber:
             self.logger.error("Error processing YAML file: %s", e)
 
 
-
     # --------------------------------------------------------------------------------------------
+
 
     def create_database(self, dbname):
         """ create database """
@@ -335,7 +366,9 @@ class VisualizationSubscriber:
             self.drop_maps_table()
         self.create_maps_table()
 
+
     # --------------------------------------------------------------------------------------------
+
 
     def drop_maps_table(self):
         """
@@ -349,7 +382,9 @@ class VisualizationSubscriber:
         except Exception as e:
             self.logger.error("Error dropping table '%s': '%s'", self.table_maps, e)
 
+
     # --------------------------------------------------------------------------------------------
+
 
     def create_maps_table(self):
         """ create instant action table """
@@ -384,7 +419,9 @@ class VisualizationSubscriber:
                 cursor.close()
                 # self.db_conn.close()
 
+
     # --------------------------------------------------------------------------------------------
+
 
     def insert_maps_db(self, msg):
         """Insert map image.pgm and .yaml into db."""
@@ -501,59 +538,6 @@ class VisualizationSubscriber:
         self.robot_positions[serial_number] = {'x': agv_position.get('x'), 'y': agv_position.get('y')}
 
     # --------------------------------------------------------------------------------------------
-    
-    def terminal_log_visualization(self, message, class_name, function_name, log_type="debug"):
-        """
-        Print nice colored logs to terminal only.
-        File logging still uses standard format.
-        """
-        if not self.output_to_screen:
-            return
-
-        # ANSI color codes for log levels
-        log_colors = {
-            "debug":    "\033[36m",      # Cyan
-            "info":     "\033[32m",      # Green
-            "notice":   "\033[38;5;208m",# Orange
-            "warn":     "\033[33m",      # Yellow
-            "error":    "\033[31m",      # Red
-            "critical": "\033[35m",      # Magenta
-        }
-
-        color = log_colors.get(log_type.lower(), "\033[37m")   # default white
-        reset = "\033[0m"
-
-        # Bright yellow for class name
-        class_color = "\033[93m"   # bright yellow - very readable
-
-        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-        # Level filtering
-        level_map = {
-            "debug": 10,
-            "info": 20,
-            "notice": 25,
-            "warn": 30,
-            "error": 40,
-            "critical": 50,
-        }
-        min_level = level_map.get(self.log_level.lower(), 20)
-        this_level = level_map.get(log_type.lower(), 20)
-
-        if this_level >= min_level:
-
-            logger_part = f"{self.logger_name:<20}: " if self.logger_name else ""
-
-            formatted = (
-                f"{logger_part}"                                   # ← added
-                f"{color}[{log_type.upper():<6}]{reset} "          # colored [INFO] etc.
-                f"\033[36m[{timestamp}]{reset} "                   # cyan timestamp              
-                f"{class_color}{class_name}{reset}"               # yellow class    
-                f".\033[1m{function_name:<20}{reset} "               # bold function name
-                f"- {message}"
-            )
-            print(formatted)
-
     # # --------------------------------------------------------------------------------------------
 
     def terminal_graph_visualization(self, graph=None, itinerary=None, robot_positions=None):

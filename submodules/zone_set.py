@@ -19,6 +19,8 @@ from shapely.ops import unary_union
 # --------------------------------------------------------------------------- #
 #                           ZoneSetPublisher                                 #
 # --------------------------------------------------------------------------- #
+logger = logging.getLogger(__name__)
+
 class ZoneSetPublisher:
     """Handles VDA-5050 zoneSet messages – validation, DB storage & MQTT publish."""
 
@@ -48,33 +50,10 @@ class ZoneSetPublisher:
             self.zoneset_schema = json.load(schema_file)
 
         # ------------------- Logger -------------------
-        self.logger = self._get_logger("ZoneSetPublisher", output_log)
+        self.logger = logger
 
         # ------------------- DB init -------------------
         self.create_database(dbname)
-
-    # --------------------------------------------------------------------- #
-    # -------------------------- LOGGING --------------------------------- #
-    # --------------------------------------------------------------------- #
-    def _get_logger(self, logger_name: str, output_log: bool):
-        logger = logging.getLogger(logger_name)
-        logger.setLevel(logging.INFO)
-
-        if not logger.hasHandlers() and output_log:
-            log_file_path = os.path.abspath("FmLogHandler.log")
-            file_handler = logging.FileHandler(log_file_path, mode="a")
-            file_handler.setFormatter(
-                logging.Formatter("[%(levelname)s] [%(asctime)s] %(name)s: %(message)s")
-            )
-            logger.addHandler(file_handler)
-
-            stream_handler = logging.StreamHandler(sys.stdout)
-            stream_handler.setFormatter(
-                logging.Formatter("[%(levelname)s] [%(asctime)s] %(name)s: %(message)s")
-            )
-            logger.addHandler(stream_handler)
-
-        return logger
 
     # --------------------------------------------------------------------- #
     # -------------------------- DB LIFECYCLE ---------------------------- #

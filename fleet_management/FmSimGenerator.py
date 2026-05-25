@@ -1,3 +1,6 @@
+import logging
+logger = logging.getLogger(__name__)
+
 #!/usr/bin/env python3
 """
 Grid-based fleet graph generator with strict dock entry rules + checkpoint pruning + full YAML exports
@@ -151,7 +154,7 @@ class GridFleetGraph:
                 if nb in self.nodes:
                     self.nodes[node_id].connect(self.nodes[nb])
                 else:
-                    print(f"Warning: Neighbor {nb} for {node_id} not found.")
+                    logger.debug(f"Warning: Neighbor {nb} for {node_id} not found.")
 
         # Derive home nodes
         self.home_nodes = [node for node in self.nodes.values() if node.description == "home_dock"]
@@ -218,7 +221,7 @@ class GridFleetGraph:
             if not chain_str:
                 continue
             tokens = [t.strip() for t in chain_str.split('-') if t.strip()]
-            print(f"\n Chain {chain_idx+1}: {chain_str}")
+            logger.debug(f"\n Chain {chain_idx+1}: {chain_str}")
             prev_node = None
             # Try to find an attachment point (first existing node in chain)
             attach_node = None
@@ -228,7 +231,7 @@ class GridFleetGraph:
                 if eid and eid.upper() in created:
                     attach_node = created[eid.upper()]
                     attach_idx = ti
-                    print(f" → Attaching at {eid.upper()} (position {ti})")
+                    logger.debug(f" → Attaching at {eid.upper()} (position {ti})")
                     break
             if attach_node:
                 branch_x = attach_node.x
@@ -260,11 +263,11 @@ class GridFleetGraph:
                     node = created[node_id]
                     actual_type = node.description  # ← use the real type here
                     if actual_type != node_type:
-                        print(f" WARNING: {node_id} already '{actual_type}', chain wants '{node_type}' → keeping '{actual_type}'")
+                        logger.debug(f" WARNING: {node_id} already '{actual_type}', chain wants '{node_type}' → keeping '{actual_type}'")
                     branch_x = node.x
                     branch_y = node.y
                     # Print the ACTUAL type and position
-                    print(f" {node_id:5} {actual_type:12} ({branch_x:6.1f}, {branch_y:6.1f})")
+                    logger.debug(f" {node_id:5} {actual_type:12} ({branch_x:6.1f}, {branch_y:6.1f})")
                 else:
                     if node_type == 'waitpoint':
                         if not prev_node or prev_node.description != 'checkpoint':
@@ -299,7 +302,7 @@ class GridFleetGraph:
                     branch_x = x
                     branch_y = y
                     # Print the NEW type
-                    print(f" {node_id:5} {node_type:12} ({x:6.1f}, {y:6.1f})")
+                    logger.debug(f" {node_id:5} {node_type:12} ({x:6.1f}, {y:6.1f})")
                 if prev_node:
                     prev_node.connect(node)
                 prev_node = node
@@ -314,7 +317,7 @@ class GridFleetGraph:
             raise ValueError(f"Only {len(self.home_nodes)} home_docks found, but num_robots={self.n_robots}")
         c_ids = [int(loc_id[1:]) for loc_id in self.nodes if loc_id.startswith('C') and loc_id[1:].isdigit()]
         self.next_c_id = max(c_ids) + 1 if c_ids else 1
-        print(f"\nBuilt custom graph from {len(self.custom_chains)} chains — {len(self.nodes)} nodes")
+        logger.debug(f"\nBuilt custom graph from {len(self.custom_chains)} chains — {len(self.nodes)} nodes")
 
 
 
@@ -424,7 +427,7 @@ class GridFleetGraph:
                     cand_x, cand_y = snap_pos(prev_x + self.edge_length * radius_mult * math.cos(rad),
                                               prev_y + self.edge_length * radius_mult * math.sin(rad))
                     if not position_is_occupied(cand_x, cand_y):
-                        print(f"  WARNING: High density area -> using spiral fallback at radius {radius_mult}")
+                        logger.debug(f"  WARNING: High density area -> using spiral fallback at radius {radius_mult}")
                         return cand_x, cand_y
 
             raise RuntimeError(f"Could not find free position for node near ({prev_x}, {prev_y})")
@@ -439,7 +442,7 @@ class GridFleetGraph:
                 continue
 
             tokens = [t.strip() for t in chain_str.split('-') if t.strip()]
-            print(f"\n Chain {chain_idx+1}: {chain_str}")
+            logger.debug(f"\n Chain {chain_idx+1}: {chain_str}")
 
             # Find attachment point (first existing node)
             attach_node = None
@@ -449,7 +452,7 @@ class GridFleetGraph:
                 if eid and eid.upper() in created:
                     attach_node = created[eid.upper()]
                     attach_idx = ti
-                    print(f" → Attaching at {eid.upper()} (position {ti})")
+                    logger.debug(f" → Attaching at {eid.upper()} (position {ti})")
                     break
 
             if attach_node:
@@ -494,16 +497,16 @@ class GridFleetGraph:
                         node = created[node_id]
                         actual_type = node.description
                         if actual_type != node_type:
-                            print(f" WARNING: {node_id} type mismatch → keeping {actual_type}")
+                            logger.debug(f" WARNING: {node_id} type mismatch → keeping {actual_type}")
                         x, y = node.x, node.y
-                        print(f" {node_id:5} {actual_type:12} ({x:6.1f}, {y:6.1f}) ← backward (existing)")
+                        logger.debug(f" {node_id:5} {actual_type:12} ({x:6.1f}, {y:6.1f}) ← backward (existing)")
                     else:
                         node = Node(node_id, x, y, node_type)
                         created[node_id] = node
                         self.nodes[node_id] = node
                         if node_type == 'home_dock':
                             self.home_nodes.append(node)
-                        print(f" {node_id:5} {node_type:12} ({x:6.1f}, {y:6.1f}) ← backward")
+                        logger.debug(f" {node_id:5} {node_type:12} ({x:6.1f}, {y:6.1f}) ← backward")
 
                     node.connect(back_prev)
                     # back_prev.connect(node)  # if bidirectional needed
@@ -545,16 +548,16 @@ class GridFleetGraph:
                     node = created[node_id]
                     actual_type = node.description
                     if actual_type != node_type:
-                        print(f" WARNING: {node_id} type mismatch → keeping {actual_type}")
+                        logger.debug(f" WARNING: {node_id} type mismatch → keeping {actual_type}")
                     x, y = node.x, node.y
-                    print(f" {node_id:5} {actual_type:12} ({x:6.1f}, {y:6.1f})")
+                    logger.debug(f" {node_id:5} {actual_type:12} ({x:6.1f}, {y:6.1f})")
                 else:
                     node = Node(node_id, x, y, node_type)
                     created[node_id] = node
                     self.nodes[node_id] = node
                     if node_type == 'home_dock':
                         self.home_nodes.append(node)
-                    print(f" {node_id:5} {node_type:12} ({x:6.1f}, {y:6.1f})")
+                    logger.debug(f" {node_id:5} {node_type:12} ({x:6.1f}, {y:6.1f})")
 
                 if prev_node:
                     prev_node.connect(node)
@@ -577,7 +580,7 @@ class GridFleetGraph:
         c_ids = [int(loc_id[1:]) for loc_id in self.nodes if loc_id.startswith('C') and loc_id[1:].isdigit()]
         self.next_c_id = max(c_ids) + 1 if c_ids else 1
 
-        print(f"\nBuilt custom graph from {len(self.custom_chains)} chains — {len(self.nodes)} nodes")
+        logger.debug(f"\nBuilt custom graph from {len(self.custom_chains)} chains — {len(self.nodes)} nodes")
 
 
 
@@ -635,7 +638,7 @@ class GridFleetGraph:
         existing[section_name] = section_data
         with open(path, "w", encoding="utf-8") as f:
             yaml.dump(existing, f, sort_keys=False, width=1000, allow_unicode=True)
-        print(f"Updated config.yaml → {section_name} section")
+        logger.debug(f"Updated config.yaml → {section_name} section")
 
     def _export_full_config_yaml(self):
         path = os.path.join(self.out_dir, "config.yaml")
@@ -679,7 +682,7 @@ class GridFleetGraph:
                 with open(path, "r", encoding="utf-8") as f:
                     existing = yaml.safe_load(f) or {}
             except yaml.YAMLError:
-                print("Warning: config.yaml corrupted → overwriting")
+                logger.debug("Warning: config.yaml corrupted → overwriting")
         existing.update(config)
         with open(path, "w", encoding="utf-8") as f:
             yaml.dump(existing, f,
@@ -687,14 +690,14 @@ class GridFleetGraph:
                       width=1000,
                       allow_unicode=True,
                       default_flow_style=False)
-        print(f"Created/updated full config.yaml → {path}")
+        logger.debug(f"Created/updated full config.yaml → {path}")
 
     # Keep your original robots export (separate file)
     def _export_robots_yaml(self):
         path = os.path.join(self.out_dir, "robots.yaml")
         with open(path, "w", encoding="utf-8") as f:
             yaml.dump(self.robots, f, sort_keys=False)
-        print(f"Exported robots.yaml → {path}")
+        logger.debug(f"Exported robots.yaml → {path}")
 
 
     # ────────────────────────────────────────────────
@@ -709,8 +712,8 @@ class GridFleetGraph:
         cols = math.ceil(math.sqrt(total_goal * 1.15))
         rows = math.ceil(total_goal / cols)
         actual = rows * cols
-        print(f"Goal ~{total_goal} nodes → grid {rows}×{cols} = {actual} nodes")
-        print(f" → expected checkpoints before docks: {actual - total_special}")
+        logger.debug(f"Goal ~{total_goal} nodes → grid {rows}×{cols} = {actual} nodes")
+        logger.debug(f" → expected checkpoints before docks: {actual - total_special}")
         self.spacing = self.edge_length
         self.max_x = (cols - 1) * self.spacing
         self.max_y = (rows - 1) * self.spacing
@@ -778,7 +781,7 @@ class GridFleetGraph:
                 raise RuntimeError(f"Dock {node.loc_id} has no neighbors after grid creation!")
             cp_nbs = [nid for nid in neighbors if self.nodes[nid].description == "checkpoint"]
             if not cp_nbs:
-                print(f"Warning: dock {node.loc_id} has no checkpoint neighbor → using random")
+                logger.debug(f"Warning: dock {node.loc_id} has no checkpoint neighbor → using random")
                 keep = random.choice(neighbors)
             else:
                 # Prefer most connected checkpoint
@@ -816,7 +819,7 @@ class GridFleetGraph:
                 removed += 1
                 changed = True
         if removed:
-            print(f"Pruned {removed} deg-1 checkpoint leaves (checkpoint-only)")
+            logger.debug(f"Pruned {removed} deg-1 checkpoint leaves (checkpoint-only)")
 
     def _prune_completely_isolated_checkpoints(self):
         """Second pass: remove deg=0 or deg=1 only-to-dock checkpoints"""
@@ -844,7 +847,7 @@ class GridFleetGraph:
             del self.nodes[rid]
             removed += 1
         if removed:
-            print(f"Pruned {removed} completely isolated or dock-only checkpoints")
+            logger.debug(f"Pruned {removed} completely isolated or dock-only checkpoints")
 
     def _verify_dock_entry_checkpoints(self):
         for node in self.nodes.values():
@@ -871,7 +874,7 @@ class GridFleetGraph:
                 raise RuntimeError(
                     f"Dock entry checkpoint {entry_id} has no checkpoint neighbor — isolated"
                 )
-        print("All dock entry checkpoints verified: connected to at least one other checkpoint")
+        logger.debug("All dock entry checkpoints verified: connected to at least one other checkpoint")
 
     def _add_waitpoints(self):
         cps = [n for n in self.nodes.values() if n.description == "checkpoint"]
@@ -916,29 +919,29 @@ class GridFleetGraph:
             })
 
     def validate(self):
-        print("\nValidation:")
+        logger.debug("\nValidation:")
         by_type = {}
         for n in self.nodes.values():
             by_type[n.description] = by_type.get(n.description, 0) + 1
         for t in sorted(by_type):
-            print(f" {t:14} : {by_type[t]:3d}")
+            logger.debug(f" {t:14} : {by_type[t]:3d}")
         dock_nodes = [n for n in self.nodes.values() if n.description in self.DOCK_TYPES]
         if dock_nodes:
             degrees = [len(n.neighbors) for n in dock_nodes]
-            print(f" Dock degrees → min/avg/max : {min(degrees)} / {sum(degrees)/len(degrees):.1f} / {max(degrees)}")
+            logger.debug(f" Dock degrees → min/avg/max : {min(degrees)} / {sum(degrees)/len(degrees):.1f} / {max(degrees)}")
             entry_degs = [len(self.nodes[list(n.neighbors)[0]].neighbors) for n in dock_nodes if n.neighbors]
             if entry_degs:
-                print(f" Entry CP degrees → min/avg/max : {min(entry_degs)} / {sum(entry_degs)/len(entry_degs):.1f} / {max(entry_degs)}")
+                logger.debug(f" Entry CP degrees → min/avg/max : {min(entry_degs)} / {sum(entry_degs)/len(entry_degs):.1f} / {max(entry_degs)}")
         isolated = sum(
             1 for n in self.nodes.values()
             if n.description == "checkpoint" and len(n.neighbors) <= 1
         )
-        print(f" Remaining low-degree checkpoints (deg ≤1): {isolated} (should be 0)")
+        logger.debug(f" Remaining low-degree checkpoints (deg ≤1): {isolated} (should be 0)")
 
     def plot(self, fname="grid_layout.png"):
         # Compute bounds for dynamic sizing and padding
         if not self.nodes:
-            print("No nodes to plot.")
+            logger.debug("No nodes to plot.")
             return
         xs = [n.x for n in self.nodes.values()]
         ys = [n.y for n in self.nodes.values()]
@@ -995,7 +998,7 @@ class GridFleetGraph:
         plt.tight_layout()
         path = os.path.join(self.out_dir, fname)
         plt.savefig(path, dpi=160, bbox_inches="tight")
-        print(f"Plot saved → {path}")
+        logger.debug(f"Plot saved → {path}")
 
     def generate_map(self, filename="turtlebot3_world", resolution=0.05, padding=2.0):
         """
@@ -1020,7 +1023,7 @@ class GridFleetGraph:
             f.write(f"{width_px} {height_px}\n".encode())
             f.write(b"255\n")
             f.write(map_data.tobytes())
-        print(f"Saved binary PGM: {pgm_path} ({width_px}×{height_px})")
+        logger.debug(f"Saved binary PGM: {pgm_path} ({width_px}×{height_px})")
         # 5. Prepare origin
         origin = [
             round(float(min_x), 6),
@@ -1069,10 +1072,10 @@ class GridFleetGraph:
                         f.write(line)
                 else:
                     f.write(line)
-        print(f"Saved map YAML → {yaml_path}")
-        print(f" Origin : {origin}")
-        print(f" Size : {width_px} × {height_px} pixels")
-        print(f" Resolution : {resolution} m/px")
+        logger.debug(f"Saved map YAML → {yaml_path}")
+        logger.debug(f" Origin : {origin}")
+        logger.debug(f" Size : {width_px} × {height_px} pixels")
+        logger.debug(f" Resolution : {resolution} m/px")
 
 
 # ────────────────────────────────────────────────

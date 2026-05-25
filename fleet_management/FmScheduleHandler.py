@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-print("🚀 FmScheduleHandler Loaded - Cumulative Snapshot Version: 2026-04-26-v1")
+import logging
+logger = logging.getLogger(__name__)
+logger.debug("🚀 FmScheduleHandler Loaded - Cumulative Snapshot Version: 2026-04-26-v1")
 
 import psycopg2, psycopg2.extras
 import os, math, time, re
@@ -146,7 +148,7 @@ class FmScheduleHandler():
         if r_id is None:
             return
 
-        print(">>>>>>>> : START : "+str(r_id)+" : >>>>>>>>")
+        logger.debug(">>>>>>>> : START : "+str(r_id)+" : >>>>>>>>")
 
         # ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
         # check if robot is task free
@@ -157,9 +159,7 @@ class FmScheduleHandler():
         # first state message — O(1) lookup, avoids verify robot fitness overhead on
         # robots that haven't connected yet.
         if r_id not in self.traffic_handler.online_robots:
-            self.traffic_handler.task_handler.visualization_handler.terminal_log_visualization(
-                f"{r_id} not yet online (no state message received). Skipping management cycle.",
-                "FmScheduleHandler", "manage_robot", "info")
+            logger.info(f"{r_id} not yet online (no state message received). Skipping management cycle.")
             return
 
         # check if robot is online and at home or free:
@@ -171,9 +171,7 @@ class FmScheduleHandler():
         # Secondary guard: if verify robot fitness still returns empty home_dock_loc_ids
         # (e.g. connection table not yet populated), skip to avoid feeding bad data downstream.
         if not home_dock_loc_ids:
-            self.traffic_handler.task_handler.visualization_handler.terminal_log_visualization(
-                f"{r_id} state received but topology not yet resolved. Skipping management cycle.",
-                "FmScheduleHandler", "manage_robot", "info")
+            logger.info(f"{r_id} state received but topology not yet resolved. Skipping management cycle.")
             return
 
         # ------------------------------------------------------------------
@@ -272,7 +270,7 @@ class FmScheduleHandler():
                 self._robot_iteration_counts[r_id] = current_count - 1
 
 
-        print(">>>>>>>> : END : "+str(r_id)+" : >>>>>>>>")
+        logger.debug(">>>>>>>> : END : "+str(r_id)+" : >>>>>>>>")
 
         # TODO!
         # monitor fleet wide error and send notification to users if necessary
@@ -284,11 +282,7 @@ class FmScheduleHandler():
     def _handle_no_latest_order(self, f_id, r_id, last_node_id, home_dock_loc_ids, charge_dock_loc_ids):
         """ handle no latest order. """
         # log viz:
-        self.traffic_handler.task_handler.visualization_handler.terminal_log_visualization(
-            "robot has no active order. manager will register robot's current node.",
-            "FmScheduleHandler",
-            "handle_no_latest_order",
-            "info")
+        logger.info("robot has no active order. manager will register robot's current node.")
         if r_id in self.traffic_handler.task_handler.cp_ignore_list and \
             r_id not in self.traffic_handler.task_handler.ignore_list:
             # remove r_id from self.traffic_handler.cp_ignore_list as well.
@@ -345,9 +339,7 @@ class FmScheduleHandler():
             # 1. This is the first time we detected "All Home"
             # 2. We are already "All Home" but a task was just cleaned up (meaning data changed)
             if all_home and (not self._last_all_home_reported or cleanup_occurred):
-                self.traffic_handler.task_handler.visualization_handler.terminal_log_visualization(
-                    " --✔️-- 🛸 Event Detection - Part 2: All Home.",
-                    "FmScheduleHandler", "handle_iteration_interval", "info")
+                logger.info(" --✔️-- 🛸 Event Detection - Part 2: All Home.")
                 self.fm_analytics(self.fleetname, self.manufacturer, write_to_file=True)
             self._last_all_home_reported = all_home
             # ----------------------------------------------------
@@ -362,16 +354,12 @@ class FmScheduleHandler():
             if unassigned_tasks:
 
                 # log viz: # Debug Print: Print the unassigned tasks before sorting
-                self.traffic_handler.task_handler.visualization_handler.terminal_log_visualization(
-                    f"unassigned tasks: {unassigned_tasks}",
-                    "FmScheduleHandler",
-                    "handle_iteration_interval",
-                    "info")
+                logger.info(f"unassigned tasks: {unassigned_tasks}")
 
                 # Debug Print: Print individual elements of unassigned_tasks
                 # for idx, task in enumerate(unassigned_tasks):
                     # Debug: unassigned_task[0] - ('unassigned_AGV-001_923f1323-2a1b-4f88-8a67-da834ce43c2a_0', datetime.datetime(2025, 2, 22, 10, 10, 20, 677451), [0,0, 'high', 'transport', 'C3', 'C5'])
-                    # print(f"Debug: unassigned_task[{idx}] - {task}")
+                    # logger.debug(f"Debug: unassigned_task[{idx}] - {task}")
 
                 # Define task outside the loop to avoid undefined variable error
                 task = None
@@ -384,7 +372,7 @@ class FmScheduleHandler():
                     )
                 except IndexError as e:
                     # Print the error with context
-                    print(f"IndexError: {e} - Task causing error: {task}")
+                    logger.debug(f"IndexError: {e} - Task causing error: {task}")
 
                 # The rest of your code...
                 # Gather only the unassigned tasks for this specific robot
@@ -430,9 +418,7 @@ class FmScheduleHandler():
         station_node = next((n for n in getattr(self.traffic_handler, 'traffic_control_dict', {}).get(r_id, []) if n in station_dk_loc_ids), None)
         is_station = bool(station_node)
         if is_station and self._last_event_nodes.get(r_id) != station_node:
-            self.traffic_handler.task_handler.visualization_handler.terminal_log_visualization(
-                " --✔️-- 🛸 Event Detection - Part 1: Station Arrival.",
-                "FmScheduleHandler", "manage_robot", "info") 
+            logger.info(" --✔️-- 🛸 Event Detection - Part 1: Station Arrival.") 
             self.fm_analytics(self.fleetname, self.manufacturer, write_to_file=True)
             self._last_event_nodes[r_id] = station_node 
         if not is_station: self._last_event_nodes.pop(r_id, None) 
@@ -538,15 +524,11 @@ class FmScheduleHandler():
                 payload_kg=0.0) # [default] since its a move/charge task.
 
         # log viz:
-        self.traffic_handler.task_handler.visualization_handler.terminal_log_visualization(
-            f"\nR_id: {r_id}. \n"
+        logger.critical(f"\nR_id: {r_id}. \n"
             f"from_loc_id: {last_node_id}, "
             f"to_loc_id: {target_dock}, "
             f"task_name: {task_name}  \n"
-            f"robot_state: {robot_state}, \n",
-            "FmScheduleHandler",
-            "_move_to_dock",
-            "critical")
+            f"robot_state: {robot_state}, \n")
 
         return True
 
@@ -677,18 +659,10 @@ class FmScheduleHandler():
                     home_dock_loc_ids, charge_dock_loc_ids)
                 if task_cleared:
                 # log viz:
-                    self.traffic_handler.task_handler.visualization_handler.terminal_log_visualization(
-                        f"task cancelled succesfully. returning to {target_dock}.",
-                        "FmScheduleHandler",
-                        "cancel_task",
-                        "info")
+                    logger.info(f"task cancelled succesfully. returning to {target_dock}.")
                     return          
         # log viz:
-        self.traffic_handler.task_handler.visualization_handler.terminal_log_visualization(
-            "task cancellation encountered a problem please try again.",
-            "FmScheduleHandler",
-            "cancel_task",
-            "error")
+        logger.error("task cancellation encountered a problem please try again.")
 
 
     def check_notification_msgs(self, f_id, r_id, errors_):
@@ -704,11 +678,7 @@ class FmScheduleHandler():
                 self.fm_send_notification_msg(f_id, r_id, external_msg)
         except (ValueError, TypeError) as error:
             # log viz:
-            self.traffic_handler.task_handler.visualization_handler.terminal_log_visualization(
-                f"{error}.",
-                "FmScheduleHandler",
-                "check_notification_msgs",
-                "warn")
+            logger.warning(f"{error}.")
             return
 
 
@@ -731,11 +701,7 @@ class FmScheduleHandler():
                 body = "Hello! Robot "+r_id+" in fleet "+f_id+" requires attention "+str(external_msg)+". Please inspect. ")
         except (ValueError, TypeError) as error:
             # log viz:
-            self.traffic_handler.task_handler.visualization_handler.terminal_log_visualization(
-                f"{error}.",
-                "FmScheduleHandler",
-                "fm_send_notification_msg",
-                "warn")
+            logger.warning(f"{error}.")
 
 
     def fm_send_factsheet_request(self, m_id, v_id):
@@ -771,12 +737,7 @@ class FmScheduleHandler():
 
         def log_and_store(message, level=debug_level):
             # Terminal logging
-            self.traffic_handler.task_handler.visualization_handler.terminal_log_visualization(
-                message,
-                "FmScheduleHandler",
-                "fm_analytics",
-                level
-            )
+            getattr(logger, level if level in ["debug","info","warning","error","critical"] else "info")(message)
             # Store for file output
             log_messages.append(message)
 
@@ -873,8 +834,8 @@ class FmScheduleHandler():
             # 3. Atomically swap: previous snapshot replaced by current full state
             os.rename(temp_filename, final_filename)
 
-            print(f"✅ Results written to: {final_filename}")
-            print(f"   (Access on host at: logs/result_snapshot.txt)")
+            logger.debug(f"✅ Results written to: {final_filename}")
+            logger.debug(f"   (Access on host at: logs/result_snapshot.txt)")
 
 
 # ────────────────────────────────────────────────
@@ -889,19 +850,19 @@ if __name__ == "__main__":
     try: # Sample database connection setup (assuming the database is already created)
         conn = psycopg2.connect(host='localhost', dbname='postgres', user='postgres', password='root', port='5432')
     except (psycopg2.OperationalError, psycopg2.ProgrammingError) as e:
-        print("Failed to connect to PostgreSQL database: %s", e)
+        logger.debug("Failed to connect to PostgreSQL database: %s", e)
 
     # initialize the task network dictionary
     task_dict_ = None
     # get config file path:
     agv_dir_prefix = (os.path.abspath(os.path.join(os.path.dirname(__file__), '../../')))
-    print("Config directory path: ", agv_dir_prefix)
+    logger.debug("Config directory path: ", agv_dir_prefix)
     file_path = Path(os.path.join(agv_dir_prefix, 'fleet_management', 'config', 'config.yaml'))
     if file_path.is_file():
         with open(file_path, 'r', encoding='utf-8') as yaml_file:
             task_dict_ = yaml.safe_load(yaml_file)
     else:
-        print("file path not set.")
+        logger.debug("file path not set.")
 
     # Initialize the StateSubscriber: Generate order message
     fleetname = "kullar"
@@ -1197,18 +1158,18 @@ if __name__ == "__main__":
         f_ids = schedule_handler.traffic_handler.task_handler.factsheet_handler.fetch_fleets()
         time.sleep(1.0)
 
-    print("f_ids: ", f_ids)
+    logger.debug("f_ids: ", f_ids)
     for f_id_ in f_ids:
         # assuming the fleets were fetched successfully, return the robots in each fleet.
         r_ids = schedule_handler.traffic_handler.task_handler.factsheet_handler.fetch_serial_numbers(f_id_)
-        print("r_ids: ", r_ids)
+        logger.debug("r_ids: ", r_ids)
         if r_ids:
             for _r_id in r_ids:
                 # Initialize the FmTrafficHandler too
                 COUNT = 0
                 while COUNT <= 3: # 3:
                     COUNT += 1
-                    print("\ncount: ", COUNT)
+                    logger.debug("\ncount: ", COUNT)
                     # manage the robot
                     schedule_handler.manage_robot(f_id=fleetname, r_id=_r_id, m_id=None, v_id=None)
 

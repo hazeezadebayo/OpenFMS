@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+import logging
+logger = logging.getLogger(__name__)
+
 
 import psycopg2, psycopg2.extras, psycopg2.pool
 import time, yaml, re, json, os, time, threading, ast
@@ -102,14 +105,14 @@ class FmMain():
                 )
                 if pool:
                     self.conn = ThreadSafeConnectionProxy(pool)
-                    print(f"Connected to database {postgres_database} at {postgres_host}")
+                    logger.debug(f"Connected to database {postgres_database} at {postgres_host}")
                     break
             except (psycopg2.OperationalError, psycopg2.ProgrammingError) as e:
-                print(f"Attempt {i+1}/{max_retries}: Failed to connect to PostgreSQL. Retrying in 3s... ({e})")
+                logger.debug(f"Attempt {i+1}/{max_retries}: Failed to connect to PostgreSQL. Retrying in 3s... ({e})")
                 time.sleep(3)
 
         if not self.conn:
-            print("Failed to connect to PostgreSQL database after multiple attempts.")
+            logger.debug("Failed to connect to PostgreSQL database after multiple attempts.")
 
         # MQTT Client placeholder ('localhost', 1883)
         self.mqtt_client = self.creat_mqtt_instance() # Define the MQTT client
@@ -182,11 +185,7 @@ class FmMain():
             self.timer_thread_running.clear()
             self.timer_thread.join()
             # log viz:
-            self.schedule_handler.traffic_handler.task_handler.visualization_handler.terminal_log_visualization(
-                "timer thread stopped.",
-                "FmMain",
-                "stop_timer_thread",
-                "critical")
+            logger.critical("timer thread stopped.")
 
     def start_timer(self):
         """ timer logic for interactive terminal gui. """
@@ -227,9 +226,7 @@ class FmMain():
             traffic_dict = getattr(self.schedule_handler.traffic_handler, 'traffic_control_dict', None)
             if traffic_dict:
                 colored_traffic = ", ".join([f"\033[96m{r}\033[0m: \033[93m{n}\033[0m" for r, n in traffic_dict.items()]) if isinstance(traffic_dict, dict) else traffic_dict
-                self.schedule_handler.traffic_handler.task_handler.visualization_handler.terminal_log_visualization(
-                    f"Traffic Control: {{{colored_traffic}}}.",
-                    "FmMain","run_cycle","critical")
+                logger.critical(f"Traffic Control: {{{colored_traffic}}}.")
 
             # Issue terminal redraw once per cycle
             self.schedule_handler.traffic_handler.task_handler.visualization_handler.terminal_graph_visualization()
@@ -247,11 +244,7 @@ class FmMain():
                     self.run_cycle()
         except KeyboardInterrupt:
             # log viz:
-            self.schedule_handler.traffic_handler.task_handler.visualization_handler.terminal_log_visualization(
-                "Exiting program...",
-                "FmMain",
-                "main_loop",
-                "critical")
+            logger.critical("Exiting program...")
             self.cleanup()
 
     def cleanup(self):
@@ -265,11 +258,7 @@ class FmMain():
             self.mqtt_client.loop_stop()
             self.mqtt_client.disconnect()
         # log viz:
-        self.schedule_handler.traffic_handler.task_handler.visualization_handler.terminal_log_visualization(
-            "Cleaned up resources. Program exited.",
-            "FmMain",
-            "cleanup",
-            "critical")
+        logger.critical("Cleaned up resources. Program exited.")
 
 
     def process_itinerary(self, itinerary, f_id):
@@ -293,11 +282,7 @@ class FmMain():
         user_input = input(prompt)
         while user_input not in valid_options:
             # log viz:
-            self.schedule_handler.traffic_handler.task_handler.visualization_handler.terminal_log_visualization(
-                f'Invalid input. Please enter one of the following: {valid_options}.',
-                "FmMain",
-                "get_valid_input",
-                "critical")
+            logger.critical(f'Invalid input. Please enter one of the following: {valid_options}.')
             user_input = input(prompt)
         return user_input
 
@@ -313,11 +298,7 @@ class FmMain():
         # set the fleet_id and robot_id
         self.fleetnames = self.schedule_handler.traffic_handler.task_handler.factsheet_handler.fetch_fleets()
         # log viz:
-        self.schedule_handler.traffic_handler.task_handler.visualization_handler.terminal_log_visualization(
-            f"Available Fleets: {self.fleetnames}",
-            "FmMain",
-            "interactive_robot_fleet_startup",
-            "critical")
+        logger.critical(f"Available Fleets: {self.fleetnames}")
 
         if len(self.fleetnames) == 0:
             time.sleep(5.0)
@@ -336,11 +317,7 @@ class FmMain():
 
         self.job_ids = self.process_itinerary(self.task_dictionary.get("itinerary", []), f_id_)
         # log viz:
-        self.schedule_handler.traffic_handler.task_handler.visualization_handler.terminal_log_visualization(
-            f"Valid landmark IDs that can be used for jobs are: \n[dock_ids]: {self.job_ids}. \n",
-            "FmMain",
-            "interactive_robot_fleet_startup",
-            "critical")
+        logger.critical(f"Valid landmark IDs that can be used for jobs are: \n[dock_ids]: {self.job_ids}. \n")
 
         self.serial_numbers = self.schedule_handler.traffic_handler.task_handler.factsheet_handler.fetch_serial_numbers(f_id_)
 
@@ -362,21 +339,13 @@ class FmMain():
         # show the options
         for i, option in enumerate(options, 1):
             # log viz:
-            self.schedule_handler.traffic_handler.task_handler.visualization_handler.terminal_log_visualization(
-                f'{i}. {option}',
-                "FmMain",
-                "interactive_robot_fleet_startup",
-                "critical")
+            logger.critical(f'{i}. {option}')
 
         # Ask for and validate the user's choice
         choice = input('Please enter the number of your choice: \n')
         while not choice.isdigit() or not 1 <= int(choice) <= len(options):
             # log viz:
-            self.schedule_handler.traffic_handler.task_handler.visualization_handler.terminal_log_visualization(
-                f'Invalid input. Please enter a number between 1 and {len(options)}',
-                "FmMain",
-                "interactive_robot_fleet_startup",
-                "critical")
+            logger.critical(f'Invalid input. Please enter a number between 1 and {len(options)}')
             choice = input('Please enter the number of your choice: ')
         # Get the chosen option
         chosen_option = options[int(choice) - 1]
@@ -396,11 +365,7 @@ class FmMain():
             from_loc_id = input('Please enter from_loc_id [options must conform to the pattern C<number> or W<number>]: \n')
             while not valid_loc_id_pattern.match(from_loc_id) or from_loc_id not in self.job_ids:
                 # log viz:
-                self.schedule_handler.traffic_handler.task_handler.visualization_handler.terminal_log_visualization(
-                    f'Invalid input. It does not conform to the C<number> or W<number> pattern or not in {self.job_ids}',
-                    "FmMain",
-                    "interactive_robot_fleet_startup",
-                    "critical")
+                logger.critical(f'Invalid input. It does not conform to the C<number> or W<number> pattern or not in {self.job_ids}')
                 from_loc_id = input('Please enter from_loc_id [options must conform to the pattern C<number> or W<number>] or exit: ')
                 if from_loc_id == 'exit':
                     return
@@ -410,11 +375,7 @@ class FmMain():
             to_loc_id = input('Please enter to_loc_id [options must conform to the pattern C<number> or W<number>]: \n')
             while not valid_loc_id_pattern.match(to_loc_id) or to_loc_id not in self.job_ids:
                 # log viz:
-                self.schedule_handler.traffic_handler.task_handler.visualization_handler.terminal_log_visualization(
-                    f'Invalid input. It does not conform to the C<number> or W<number> pattern or not in {self.job_ids}',
-                    "FmMain",
-                    "interactive_robot_fleet_startup",
-                    "critical")
+                logger.critical(f'Invalid input. It does not conform to the C<number> or W<number> pattern or not in {self.job_ids}')
                 to_loc_id = input('Please enter to_loc_id [options must conform to the pattern C<number> or W<number>] or exit: ')
                 if to_loc_id == 'exit':
                     return
@@ -424,11 +385,7 @@ class FmMain():
             task_name = input('Please enter task_name [move, charge, transport]: \n')
             while task_name not in self.job_types:
                 # log viz:
-                self.schedule_handler.traffic_handler.task_handler.visualization_handler.terminal_log_visualization(
-                    'Invalid input. The task name must be one of the following: move, charge, transport.',
-                    "FmMain",
-                    "interactive_robot_fleet_startup",
-                    "critical")
+                logger.critical('Invalid input. The task name must be one of the following: move, charge, transport.')
                 task_name = input('Please enter task_name [move, charge, transport] or exit: ')
                 if task_name == 'exit':
                     return
@@ -438,11 +395,7 @@ class FmMain():
             task_priority = input('Please enter task_priority [low, high, medium]: \n')
             while task_priority not in self.job_priorites:
                 # log viz:
-                self.schedule_handler.traffic_handler.task_handler.visualization_handler.terminal_log_visualization(
-                    'Invalid input. The task priority must be one of the following: low, high, medium.',
-                    "FmMain",
-                    "interactive_robot_fleet_startup",
-                    "critical")
+                logger.critical('Invalid input. The task priority must be one of the following: low, high, medium.')
                 task_priority = input('Please enter task_priority [low, high, medium] or exit: ')
                 if task_priority == 'exit':
                     return
@@ -452,32 +405,20 @@ class FmMain():
             payload_size = input('Please enter payload_size [must be a positive integer]: \n')
             while not valid_payload_pattern.match(payload_size):
                 # log viz:
-                self.schedule_handler.traffic_handler.task_handler.visualization_handler.terminal_log_visualization(
-                    'Invalid input. Payload size must be a positive integer without symbols or letters.',
-                    "FmMain",
-                    "interactive_robot_fleet_startup",
-                    "critical")
+                logger.critical('Invalid input. Payload size must be a positive integer without symbols or letters.')
                 payload_size = input('Please enter payload_size [must be a positive integer] or exit: ')
                 if payload_size == 'exit':
                     return
 
             # Now you have valid inputs and you can proceed with your task
             # log viz:
-            self.schedule_handler.traffic_handler.task_handler.visualization_handler.terminal_log_visualization(
-                f'from_loc_id: {from_loc_id}, to_loc_id: {to_loc_id}, task_name: {task_name}, task_priority: {task_priority}',
-                "FmMain",
-                "interactive_robot_fleet_startup",
-                "critical")
+            logger.critical(f'from_loc_id: {from_loc_id}, to_loc_id: {to_loc_id}, task_name: {task_name}, task_priority: {task_priority}')
 
             # answer = "yes"
             answer = input('WARNING! Are you sure you want to continue with robot task? [yes, no]: \n')
             while answer not in self.decision:
                 # log viz:
-                self.schedule_handler.traffic_handler.task_handler.visualization_handler.terminal_log_visualization(
-                    'Invalid input. The decision must be one of the following: yes, no.',
-                    "FmMain",
-                    "interactive_robot_fleet_startup",
-                    "critical")
+                logger.critical('Invalid input. The decision must be one of the following: yes, no.')
                 answer = input('Please enter decision [yes, no]: ')
             if answer == 'no':
                 return
@@ -503,11 +444,7 @@ class FmMain():
             answer = input('WARNING! Are you sure you want to pause task? choose no to resume or ignore. [yes, no]: \n')
             while answer not in self.decision:
                 # log viz:
-                self.schedule_handler.traffic_handler.task_handler.visualization_handler.terminal_log_visualization(
-                    'Invalid input. The decision must be one of the following: yes to pause, no to resume or exit choice.',
-                    "FmMain",
-                    "interactive_robot_fleet_startup",
-                    "critical")
+                logger.critical('Invalid input. The decision must be one of the following: yes to pause, no to resume or exit choice.')
                 answer = input('Please enter decision [yes, no]: ')
             # Convert the pause_list to a set to ensure uniqueness
             self.schedule_handler.traffic_handler.task_handler.pause_list = set(self.schedule_handler.traffic_handler.task_handler.pause_list)
@@ -525,11 +462,7 @@ class FmMain():
             answer = input('WARNING! Are you sure you want to cancel task? move robot home. [yes, no]: \n')
             while answer not in self.decision:
                 # log viz:
-                self.schedule_handler.traffic_handler.task_handler.visualization_handler.terminal_log_visualization(
-                    'Invalid input. The decision must be one of the following: yes to cancel, no to exit choice.',
-                    "FmMain",
-                    "interactive_robot_fleet_startup",
-                    "critical")
+                logger.critical('Invalid input. The decision must be one of the following: yes to cancel, no to exit choice.')
                 answer = input('Please enter decision [yes, no]: ')
             if answer == 'yes':
                 # cancelOrder | - | AGV is stopping or driving, until it reaches the next node.
@@ -545,12 +478,8 @@ class FmMain():
             answer = input('WARNING! Are you sure you want the manager to ignore this robot? please ensure robot not in any landmark. [yes, no]: \n')
             while answer not in self.decision:
                 # log viz:
-                self.schedule_handler.traffic_handler.task_handler.visualization_handler.terminal_log_visualization(
-                    'Invalid input. The decision must be one of the following: yes to add robot to the ignore list, \
-                    no to remove robot from list or exit choice.',
-                    "FmMain",
-                    "interactive_robot_fleet_startup",
-                    "critical")
+                logger.critical('Invalid input. The decision must be one of the following: yes to add robot to the ignore list, \
+                    no to remove robot from list or exit choice.')
                 answer = input('Please enter decision [yes, no]: ')
             # Convert the pause_list to a set to ensure uniqueness
             self.schedule_handler.traffic_handler.task_handler.ignore_list = set(self.schedule_handler.traffic_handler.task_handler.ignore_list)
@@ -567,11 +496,7 @@ class FmMain():
             station_type = input('Please enter station_type from: '+str(self.station_type)+'.')
             while station_type not in self.station_type:
                 # log viz:
-                self.schedule_handler.traffic_handler.task_handler.visualization_handler.terminal_log_visualization(
-                    f'Invalid input. The station_type must be one of the following: {self.station_type}.',
-                    "FmMain",
-                    "interactive_robot_fleet_startup",
-                    "critical")
+                logger.critical(f'Invalid input. The station_type must be one of the following: {self.station_type}.')
                 station_type = input('Please enter station_type : '+str(self.station_type)+'. or exit: ')
                 if station_type == 'exit':
                     return
@@ -585,22 +510,14 @@ class FmMain():
 
             if not map_name:
                 # log viz:
-                self.schedule_handler.traffic_handler.task_handler.visualization_handler.terminal_log_visualization(
-                    'No map found. This part expects that fleet_id, maps and their respective .yaml and .pgm paths \
-                        have been set in the config.yaml.',
-                    "FmMain",
-                    "interactive_robot_fleet_startup",
-                    "critical")
+                logger.critical('No map found. This part expects that fleet_id, maps and their respective .yaml and .pgm paths \
+                        have been set in the config.yaml.')
                 return
 
             map_resp = input('Which map in fleet '+str(f_id_)+' does this node belong? Please enter map_name from: '+str(map_name)+'.')
             while map_resp not in map_name:
                 # log viz:
-                self.schedule_handler.traffic_handler.task_handler.visualization_handler.terminal_log_visualization(
-                    f'Invalid input. The map response must be one of the following: {map_name}.',
-                    "FmMain",
-                    "interactive_robot_fleet_startup",
-                    "critical")
+                logger.critical(f'Invalid input. The map response must be one of the following: {map_name}.')
                 map_resp = input('Please enter map response : '+str(map_name)+'. or exit: ')
                 if map_resp == 'exit':
                     return
@@ -611,11 +528,7 @@ class FmMain():
             input_loc_id = input('Please enter valid location/landmark id [options must conform to the pattern C<number> or W<number>]: ')
             while not valid_loc_id_pattern.match(input_loc_id):
                 # log viz:
-                self.schedule_handler.traffic_handler.task_handler.visualization_handler.terminal_log_visualization(
-                    'Invalid input. It does not conform to the C<number> or W<number> pattern.',
-                    "FmMain",
-                    "interactive_robot_fleet_startup",
-                    "critical")
+                logger.critical('Invalid input. It does not conform to the C<number> or W<number> pattern.')
                 input_loc_id = input('Please enter input_loc_id [options must conform to the pattern C<number> or W<number>] or exit: ')
                 if input_loc_id == 'exit':
                     return
@@ -627,11 +540,7 @@ class FmMain():
             neighbor_loc_ids = input('Neighbors cannot be left empty. Please enter valid connected location/landmark ids [options must conform to the pattern C<number> or W<number>, comma separated]: ')
             while not valid_neihbour_id_pattern.match(neighbor_loc_ids.replace(" ","")):
                 # log viz:
-                self.schedule_handler.traffic_handler.task_handler.visualization_handler.terminal_log_visualization(
-                    'Invalid input. It does not conform to the C<number> or W<number> comma-separated pattern.',
-                    "FmMain",
-                    "interactive_robot_fleet_startup",
-                    "critical")
+                logger.critical('Invalid input. It does not conform to the C<number> or W<number> comma-separated pattern.')
                 neighbor_loc_ids = input('Please enter neighbor_loc_ids [options must conform to the pattern C<number> or W<number>, comma separated] or exit: ')
                 if neighbor_loc_ids == 'exit':
                     return
@@ -650,11 +559,7 @@ class FmMain():
                         raise ValueError
                 except Exception:
                     # log viz:
-                    self.schedule_handler.traffic_handler.task_handler.visualization_handler.terminal_log_visualization(
-                        "Invalid input. loc_pose must be a list of four numbers [x, y, w, z]. Try again or enter 'exit'.",
-                        "FmMain",
-                        "interactive_robot_fleet_startup",
-                        "critical")
+                    logger.critical("Invalid input. loc_pose must be a list of four numbers [x, y, w, z]. Try again or enter 'exit'.")
                     if loc_pose_input.lower() == 'exit':
                         return
 
@@ -668,11 +573,7 @@ class FmMain():
             loc_id = input('Please enter a string of the form C<number> or W<number>: ')
             while not valid_pattern.match(loc_id):
                 # log viz:
-                self.schedule_handler.traffic_handler.task_handler.visualization_handler.terminal_log_visualization(
-                    'Invalid input. It does not conform to the C<number> or W<number> pattern.',
-                    "FmMain",
-                    "extract_yaml_info",
-                    "critical")
+                logger.critical('Invalid input. It does not conform to the C<number> or W<number> pattern.')
                 loc_id = input('Please enter a string of the form C<number> or W<number> or exit: ')
                 if loc_id == 'exit':
                     return
@@ -695,22 +596,17 @@ class FmMain():
                     else:
                         raise ValueError
                 except Exception:
-                    self.schedule_handler.traffic_handler.task_handler.visualization_handler.terminal_log_visualization(
-                        "Invalid input. Mutex Group must be a list of strings [node1, node2, ...]. Try again or enter 'exit'.",
-                        "FmMain",
-                        "interactive_robot_fleet_startup",
-                        "critical")
+                    logger.critical("Invalid input. Mutex Group must be a list of strings [node1, node2, ...]. Try again or enter 'exit'.")
                     if group_input.lower() == 'exit':
                         break
 
         elif chosen_option == 'fm_remove_mutex_group':
             current_groups = self.schedule_handler.traffic_handler.mutex_groups
             if not current_groups:
-                 self.schedule_handler.traffic_handler.task_handler.visualization_handler.terminal_log_visualization(
-                        "No mutex groups currently defined.", "FmMain", "interactive_robot_fleet_startup", "info")
+                 logger.info("No mutex groups currently defined.")
             else:
                 for i, group in enumerate(current_groups, 1):
-                    print(f"{i}. {group}")
+                    logger.debug(f"{i}. {group}")
                 choice = input("Enter the number of the group to remove: ")
                 if choice.isdigit() and 1 <= int(choice) <= len(current_groups):
                     removed_group = current_groups[int(choice) - 1]
@@ -719,12 +615,8 @@ class FmMain():
         elif chosen_option == 'exit':
             r_id_ = 0
             # log viz:
-            self.schedule_handler.traffic_handler.task_handler.visualization_handler.terminal_log_visualization(
-                'exiting menu. \nAll of this was written and designed by Hazeezadebayo. \n \
-                                                                         Thank you.',
-                "FmMain",
-                "interactive_robot_fleet_startup",
-                "critical")
+            logger.critical('exiting menu. \nAll of this was written and designed by Hazeezadebayo. \n \
+                                                                         Thank you.')
             return
 
     def fm_dispatch_task(self,
@@ -760,11 +652,7 @@ class FmMain():
             # Validate Fleet
             if not self.fleetnames or fleet_id not in self.fleetnames:
                 # log viz:
-                self.schedule_handler.traffic_handler.task_handler.visualization_handler.terminal_log_visualization(
-                    f"Error: Fleet {fleet_id} not found in available fleets: {self.fleetnames}",
-                    "FmMain",
-                    "interactive_robot_fleet_startup",
-                    "critical")
+                logger.critical(f"Error: Fleet {fleet_id} not found in available fleets: {self.fleetnames}")
 
             self.fleetname = fleet_id
 
@@ -772,11 +660,7 @@ class FmMain():
             stat = self.upload_all_maps(fleet_id)
             if not stat:
                 # log viz:
-                self.schedule_handler.traffic_handler.task_handler.visualization_handler.terminal_log_visualization(
-                    "Error: Map upload failed.",
-                    "FmMain",
-                    "interactive_robot_fleet_startup",
-                    "critical")
+                logger.critical("Error: Map upload failed.")
                 return
 
             # 4. Process Job IDs (Landmarks)
@@ -787,15 +671,11 @@ class FmMain():
 
             # Validate Locations
             if (from_loc not in self.job_ids) or (to_loc not in self.job_ids) or (robot_id is None):
-                print(f"[FmMain] Warning: Locations {from_loc} or {to_loc} not found in valid job_ids: {self.job_ids}")
+                logger.debug(f"[FmMain] Warning: Locations {from_loc} or {to_loc} not found in valid job_ids: {self.job_ids}")
                 return
 
             # log viz:
-            self.schedule_handler.traffic_handler.task_handler.visualization_handler.terminal_log_visualization(
-                f"Sending {robot_id} request: {from_loc} -> {to_loc} ({task_name})",
-                "FmMain",
-                "interactive_robot_fleet_startup",
-                "critical")
+            logger.critical(f"Sending {robot_id} request: {from_loc} -> {to_loc} ({task_name})")
 
             # 6. Send the Task Request
             task_cleared, available_robots, checkpoints, \
@@ -847,11 +727,7 @@ class FmMain():
 
         else:
             # log viz:
-            self.schedule_handler.traffic_handler.task_handler.visualization_handler.terminal_log_visualization(
-                'agv configuration file missing.',
-                "FmMain",
-                "extract_yaml_info",
-                "critical")
+            logger.critical('agv configuration file missing.')
             exit(0)
 
     def upload_all_maps(self, f_id):
@@ -869,11 +745,7 @@ class FmMain():
                 # Check if PGM and YAML files exist
                 if (not os.path.isfile(pgm_file_path)) or (not os.path.isfile(yaml_file_path)):
                     # Log viz:
-                    self.schedule_handler.traffic_handler.task_handler.visualization_handler.terminal_log_visualization(
-                        f"PGM: {pgm_file_path}, or YAML: {yaml_file_path} file does not exist.",
-                        "FmMain",
-                        "upload_all_maps",
-                        "critical")
+                    logger.critical(f"PGM: {pgm_file_path}, or YAML: {yaml_file_path} file does not exist.")
                     return False
                 # Create the message dictionary to pass to the insert function
                 msg = {
@@ -887,11 +759,7 @@ class FmMain():
             return True
         else:
             # Log viz:
-            self.schedule_handler.traffic_handler.task_handler.visualization_handler.terminal_log_visualization(
-                f"No maps found for fleet_id {f_id}.",
-                "FmMain",
-                "upload_all_maps",
-                "critical")
+            logger.critical(f"No maps found for fleet_id {f_id}.")
         return False
 
 # ----------------------------------------------------------------------- #
@@ -913,11 +781,7 @@ class FmMain():
         self.mqtt_client.connect(host=str(mqtt_address), port=int(mqtt_port)) # keep alive for 60secs
         self.mqtt_client.loop_start()
         # log viz:
-        self.schedule_handler.traffic_handler.task_handler.visualization_handler.terminal_log_visualization(
-            'connection done.',
-            "FmMain",
-            "mqtt_connect",
-            "critical")
+        logger.critical('connection done.')
 
     def on_mqtt_connect(self, client, userdata, flags, rc, *extra_args):
         """Callback for when the client receives a connection acknowledgment from the broker."""
@@ -928,17 +792,9 @@ class FmMain():
             self.schedule_handler.traffic_handler.task_handler.state_handler.subscribe(self.mqtt_client)
         else:
             # log viz:
-            self.schedule_handler.traffic_handler.task_handler.visualization_handler.terminal_log_visualization(
-                f'Disconnected from MQTT Broker! with client: {client}, and userdata: {userdata}.',
-                "FmMain",
-                "on_mqtt_connect",
-                "critical")
+            logger.critical(f'Disconnected from MQTT Broker! with client: {client}, and userdata: {userdata}.')
         # log viz:
-        self.schedule_handler.traffic_handler.task_handler.visualization_handler.terminal_log_visualization(
-            f'Connected to MQTT broker with result code {rc}.',
-            "FmMain",
-            "on_mqtt_connect",
-            "critical")
+        logger.critical(f'Connected to MQTT broker with result code {rc}.')
 
     def on_mqtt_message(self, client, userdata, msg):
         """ on mqtt message """
@@ -956,29 +812,17 @@ class FmMain():
                     self.schedule_handler.traffic_handler.online_robots.add(r_id)
         except json.JSONDecodeError as e:
             # log viz:
-            self.schedule_handler.traffic_handler.task_handler.visualization_handler.terminal_log_visualization(
-                f'Failed to decode JSON message: {e}.',
-                "FmMain",
-                "on_mqtt_message",
-                "critical")
+            logger.critical(f'Failed to decode JSON message: {e}.')
         except ValidationError as er:
             # log viz:
-            self.schedule_handler.traffic_handler.task_handler.visualization_handler.terminal_log_visualization(
-                f'validation failed: {er.message}.',
-                "FmMain",
-                "on_mqtt_message",
-                "critical")
+            logger.critical(f'validation failed: {er.message}.')
 
     # def on_mqtt_disconnect(self, client, userdata, rc):
     def on_mqtt_disconnect(self, client, userdata, rc, properties=None, reason_code=None):
         """MQTT client disconnect callback."""
         if rc != 0:
             # log viz:
-            self.schedule_handler.traffic_handler.task_handler.visualization_handler.terminal_log_visualization(
-                f"Disconnected (rc: {rc}, {error_string(rc)}). Trying to reconnect.",
-                "FmMain",
-                "on_mqtt_disconnect",
-                "critical")
+            logger.critical(f"Disconnected (rc: {rc}, {error_string(rc)}). Trying to reconnect.")
             while not self.mqtt_client.is_connected():
                 try:
                     self.mqtt_client.reconnect()
@@ -986,11 +830,7 @@ class FmMain():
                     pass
         else:
             # log viz:
-            self.schedule_handler.traffic_handler.task_handler.visualization_handler.terminal_log_visualization(
-                f'Disconnected from MQTT Broker! with client: {client}, and userdata: {userdata}.',
-                "FmMain",
-                "on_mqtt_disconnect",
-                "critical")
+            logger.critical(f'Disconnected from MQTT Broker! with client: {client}, and userdata: {userdata}.')
 
 # ---------------------------------------------- #
 #      MAIN                                      #

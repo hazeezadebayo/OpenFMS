@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+import logging
+logger = logging.getLogger(__name__)
 
 import psycopg2
 import time
@@ -294,10 +296,8 @@ class FmTaskHandler:
                             chosen_r_id = alt['r_id']
                             robot_state = alt['robot_state']
 
-                            self.visualization_handler.terminal_log_visualization(
-                                f"User robot {r_id} busy. Reassigning to next best: {chosen_r_id} "
-                                f"(fitness: {alt['fitness']:.3f})",
-                                "FmTaskHandler", "fm_send_task_request", "info")
+                            logger.info(f"User robot {r_id} busy. Reassigning to next best: {chosen_r_id} "
+                                f"(fitness: {alt['fitness']:.3f})")
                         else:
                             # No alternative available (could happen if we only had one robot)
                             # or its a charge task → queue for the user robot
@@ -307,23 +307,17 @@ class FmTaskHandler:
                                     task_name, task_priority, payload_kg)
                             return False, None, [], [], [], [], []    
                     else: # move task:
-                        self.visualization_handler.terminal_log_visualization(
-                            "Task choice unrecognized. Task cannot be queued.",
-                            "FmTaskHandler", "fm_send_task_request", "critical")
+                        logger.critical("Task choice unrecognized. Task cannot be queued.")
                         return False, None, [], [], [], [], []     
         else:
             # --- Step 4: Handle no available robots ---
-            self.visualization_handler.terminal_log_visualization(
-                "No valid robots found in fleet. Task cannot be queued.",
-                "FmTaskHandler", "fm_send_task_request", "critical")
+            logger.critical("No valid robots found in fleet. Task cannot be queued.")
             return False, None, [], [], [], [], []
 
         # --- Step 5: Log assignment ---
         msg = (f"[FUZZY ASSIGN] → {chosen_r_id} | Fitness: {best['fitness']:.3f} "
             f"| Travel: {best['travel_time']:.1f}s")
-        self.visualization_handler.terminal_log_visualization(
-            msg, "FmTaskHandler", "fm_send_task_request", "info"
-        )
+        logger.info(msg)
 
         # --- Step 6: Finalize and file ---
         cleared, checkpoints, agv_itinerary, waitpoints, wait_itinerary, landmark = \
@@ -442,7 +436,7 @@ class FmTaskHandler:
             f"waitpoints: {waitpoints} \n"
             f"waitpoint's itinerary: {wait_itinerary}. \n --- "
         )
-        self.visualization_handler.terminal_log_visualization(log_msg, "FmTaskHandler", "request_tasks", "critical")
+        logger.critical(log_msg)
 
         return task_clear, checkpoints, agv_itinerary, waitpoints, wait_itinerary, landmark
 
@@ -451,13 +445,13 @@ class FmTaskHandler:
     def _build_task(self, f_id, from_loc_id, to_loc_id, task_name, task_priority, payload_kg, task_dictionary):
         if from_loc_id == to_loc_id and task_name not in ['charge', 'move']:
             msg = "'load' location cannot be equal to 'unload' location."
-            self.visualization_handler.terminal_log_visualization(msg, "FmTaskHandler", "_build_task", "error")
+            logger.error(msg)
             return None
 
         if not self.check_node_in_fleet(f_id, from_loc_id, task_dictionary) or \
            not self.check_node_in_fleet(f_id, to_loc_id, task_dictionary):
             msg = f"Invalid node in fleet {f_id}."
-            self.visualization_handler.terminal_log_visualization(msg, "FmTaskHandler", "_build_task", "error")
+            logger.error(msg)
             return None
 
         task_type_map = {'transport': 0, 'loop': 0, 'charge': 1, 'move': 2}
@@ -500,9 +494,7 @@ class FmTaskHandler:
             - Ignore list check
         """
         if r_id in self.ignore_list:
-            self.visualization_handler.terminal_log_visualization(
-                f"Robot {r_id}: ignored. Remove from ignore list.",
-                "FmTaskHandler", "fm_file_task", "error")
+            logger.error(f"Robot {r_id}: ignored. Remove from ignore list.")
             return
 
         try:
@@ -539,8 +531,7 @@ class FmTaskHandler:
             self.order_handler.build_order_msg(plan, b_node, b_edge, h_nodes, h_edges)
 
         except (ValueError, TypeError) as e:
-            self.visualization_handler.terminal_log_visualization(
-                f"Robot {r_id}: {e}", "FmTaskHandler", "fm_file_task", "warn")
+            logger.warning(f"Robot {r_id}: {e}")
 
     # ----------------------------------------------------------------------------
 
@@ -631,18 +622,10 @@ class FmTaskHandler:
             if (task_name in ['transport', 'loop'] and (float(payload_kg) > float(max_payload))):
                 can_carry = False
                 # log viz:
-                self.visualization_handler.terminal_log_visualization(
-                    f"{r_id}: required payload size '{payload_kg}' is greater than the robot's max payload size '{max_payload}'.",
-                    "FmTaskHandler",
-                    "verify_robot_fitness",
-                    "info")
+                logger.info(f"{r_id}: required payload size '{payload_kg}' is greater than the robot's max payload size '{max_payload}'.")
         except ValueError as e:
             # log viz:
-            self.visualization_handler.terminal_log_visualization(
-                f"{r_id}: Error converting payload values to float: {e}",
-                "FmTaskHandler",
-                "verify_robot_fitness",
-                "error")
+            logger.error(f"{r_id}: Error converting payload values to float: {e}")
             # Optionally, set a default behavior or re-raise the exception:
             can_carry = False
 
@@ -654,8 +637,7 @@ class FmTaskHandler:
         else:
             connection_state, _ = self.connection_handler.fetch_data(m_id, r_id)
         # # log viz:
-        # self.visualization_handler.terminal_log_visualization(
-        #     f"{r_id}: connection state is {connection_state}.",
+        # logger.info(#     f"{r_id}: connection state is {connection_state}.",
         #     "FmTaskHandler",
         #     "verify_robot_fitness",
         #     "info")
@@ -679,30 +661,18 @@ class FmTaskHandler:
                     if node_states: # green
                         at_home = False
                         # log viz:
-                        self.visualization_handler.terminal_log_visualization(
-                            f"Robot {r_id}: appears to already be on a task.",
-                            "FmTaskHandler",
-                            "verify_robot_fitness",
-                            "info")
+                        logger.info(f"Robot {r_id}: appears to already be on a task.")
                     else: # red
                         at_home = self.get_if_home(f_id, last_node_id)
                         if not at_home:
                             # log viz:
-                            self.visualization_handler.terminal_log_visualization(
-                                f"Robot {r_id}: last node id not a home dock.",
-                                "FmTaskHandler",
-                                "verify_robot_fitness",
-                                "info")
+                            logger.info(f"Robot {r_id}: last node id not a home dock.")
                 else:
                     last_node_id = loc_node_owner
                     at_home = self.get_if_home(f_id, last_node_id)
                     if not at_home:
                         # log viz:
-                        self.visualization_handler.terminal_log_visualization(
-                            f"Robot {r_id}: no last node id found in state msg and robot location not close to a home dock.",
-                            "FmTaskHandler",
-                            "verify_robot_fitness",
-                            "info")
+                        logger.info(f"Robot {r_id}: no last node id found in state msg and robot location not close to a home dock.")
                 # -----------------
                 # Fetch and handle last received order
                 # -----------------
@@ -742,8 +712,7 @@ class FmTaskHandler:
                                 cleared = True
                         # else:
                         #     # log viz:
-                        #     self.visualization_handler.terminal_log_visualization(
-                        #         f"Robot {r_id}: previous task was not cancelled and robot is not at a home dock.",
+                        #     logger.info(#         f"Robot {r_id}: previous task was not cancelled and robot is not at a home dock.",
                         #         "FmTaskHandler",
                         #         "verify_robot_fitness",
                         #         "info")
@@ -756,11 +725,7 @@ class FmTaskHandler:
                         cleared = True
                     else:
                         # log viz:
-                        self.visualization_handler.terminal_log_visualization(
-                            f"Robot {r_id}: battery level lower than minimum required.",
-                            "FmTaskHandler",
-                            "verify_robot_fitness",
-                            "info")
+                        logger.warning(f"Robot {r_id}: battery level lower than minimum required.")
 
         return (cleared, current_position, battery_charge, last_node_id, order_id_,
                 order_timestamp, home_dock_loc_ids, charge_dock_loc_ids, station_dk_loc_ids,
@@ -786,8 +751,7 @@ class FmTaskHandler:
         """
 
         # # log viz:
-        # self.visualization_handler.terminal_log_visualization(
-        #     f"robot position: {r_position[0]}, {r_position[1]}, {r_position[2]}.",
+        # logger.error(#     f"robot position: {r_position[0]}, {r_position[1]}, {r_position[2]}.",
         #     "FmTaskHandler",
         #     "find_nearest_node",
         #     "info")
@@ -822,11 +786,7 @@ class FmTaskHandler:
                         shortest_dist = d
                         loc_node_ownr = loc_id
                         # # log viz:
-                        # self.visualization_handler.terminal_log_visualization(
-                        #     f"Found shortest distance: {shortest_dist} with loc: {loc_node_ownr}.",
-                        #     "FmTaskHandler",
-                        #     "find_nearest_node",
-                        #     "info")
+                        # logger.info(f"Found shortest distance: {shortest_dist} with loc: {loc_node_ownr}.")
 
         return shortest_dist, loc_node_ownr, home_dk_loc_ids, charge_dk_loc_ids, station_dk_loc_ids
 
@@ -897,10 +857,7 @@ class FmTaskHandler:
                 home_dock_loc_ids, td, payload_kg
             )
 
-        self.visualization_handler.terminal_log_visualization(
-            "Unknown task name. Must be: charge, move, transport, loop",
-            "FmTaskHandler", "build_task_itinerary", "error"
-        )
+        logger.error("Unknown task name. Must be: charge, move, transport, loop")
         return [], [], []
 
     # ----------------------------------------------------------------------------------------------------
@@ -928,9 +885,7 @@ class FmTaskHandler:
                 target = to_loc_id
                 others = [d for d in charge_dock_loc_ids if d != target]
             else:
-                self.visualization_handler.terminal_log_visualization(
-                    "Invalid charge dock. Selecting random valid one.",
-                    "FmTaskHandler", "handle_charge_or_move_task", "info")
+                logger.info("Invalid charge dock. Selecting random valid one.")
                 target = random.choice(charge_dock_loc_ids)
                 others = [d for d in charge_dock_loc_ids if d != target]
 
@@ -942,9 +897,7 @@ class FmTaskHandler:
             #     return [], [], []
 
             if to_loc_id not in home_dock_loc_ids:
-                self.visualization_handler.terminal_log_visualization(
-                    "Move task only to home docks.", "FmTaskHandler",
-                    "handle_charge_or_move_task", "error")
+                logger.error("Move task only to home docks.")
                 return [], [], []
 
             landmark = [payload_kg, task_priority, task_name]
@@ -1030,8 +983,7 @@ class FmTaskHandler:
 
     def fm_extract_unique_waitpoints(self, checkpoints, task_dictionary):
         """ fetch the locations coordinates associated with the node/checkpoints path """
-        self.visualization_handler.terminal_log_visualization(
-            "fetching task checkpoint's associated waitpoints...", "FmTaskHandler", "fm_extract_unique_waitpoints", "info")
+        logger.info("fetching task checkpoint's associated waitpoints...")
         graph = self.build_graph(task_dictionary)
         waitpoints = set()
         for cp in checkpoints:

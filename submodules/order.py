@@ -1,3 +1,6 @@
+import logging
+logger = logging.getLogger(__name__)
+
 import json, os, logging, datetime, time, uuid, math, re, sys, threading
 from psycopg2 import sql
 import psycopg2, psycopg2.extras
@@ -83,7 +86,7 @@ class OrderPublisher:
         self.output_to_file = output_log
 
         # logger; here we use a simple print-based one for clarity.
-        self.logger = self._get_logger("OrderPublisher", output_log)
+        self.logger = logger
 
         self.create_database(dbname)
 
@@ -101,37 +104,6 @@ class OrderPublisher:
         self.cache: dict = {}
 
         # We can implement a background loop to verify these if needed:--------------------------------------------------------------------------------------------
-
-    def _get_logger(self, logger_name, output_log):
-
-        logger = logging.getLogger(logger_name)
-        logger.setLevel(logging.INFO)
-
-        # Ensure handlers are not duplicated
-        if not logger.hasHandlers() and output_log:
-            # Set up logging to log file
-            log_file_path = os.path.abspath("FmLogHandler.log")
-            file_mode = 'a' if os.path.exists(log_file_path) else 'w'
-
-            file_handler = logging.FileHandler(log_file_path, mode=file_mode)
-            file_handler.setFormatter(
-                logging.Formatter("[%(levelname)s] [%(asctime)s] %(name)s: %(message)s")
-            )
-            logger.addHandler(file_handler)
-
-            if self.output_to_screen:
-                # Output to terminal (stdout)
-                stream_handler = logging.StreamHandler(sys.stdout)
-                stream_handler.setFormatter(
-                    logging.Formatter("[%(levelname)s] [%(asctime)s] %(name)s: %(message)s")
-                )
-                logger.addHandler(stream_handler)
-
-            # Show log file path
-            # logger.info(f"Logs are written to: {log_file_path}")
-            pass
-
-        return logger
 
     # --------------------------------------------------------------------------------------------
 
