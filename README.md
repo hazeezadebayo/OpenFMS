@@ -152,6 +152,7 @@ To visualize the fleet navigation, robot positions, and live analytics in real-t
 ```bash
 ./run_openfms.sh up dashboard
 ```
+
 or
 
 ```bash
@@ -176,15 +177,15 @@ cat logs/result_snapshot.txt
 
 ```text
 ════════════════════════════════════════════════════════════════════════════════════════════════════
-                                Fleet kullar | Nodes: 8 | Robots: 2                               
+                                Fleet kullar | Nodes: 8 | Robots: 2                             
 
-                                       📊 FLEET-WIDE ANALYTICS                                     
+                                       📊 FLEET-WIDE ANALYTICS                                   
 ────────────────────────────────────────────────────────────────────────────────────────────────────
-                     completed Orders: 0. | active Orders: 0. | unassigned Orders: 0. | Conflicts: 0.                  
-         Cumulative Delay: 0.0s | Task Completion: 0.0s | Peak Throughput (PTP): 0.0              
-                       State Msg Latency: 0.0s | Idle Time: 0.0s                       
+                     completed Orders: 0. | active Orders: 0. | unassigned Orders: 0. | Conflicts: 0.                
+         Cumulative Delay: 0.0s | Task Completion: 0.0s | Peak Throughput (PTP): 0.0            
+                       State Msg Latency: 0.0s | Idle Time: 0.0s                     
 ════════════════════════════════════════════════════════════════════════════════════════════════════
-                             Scale ≈ 20×16 | x:[0.0…18.0] y:[-6.0…6.0]                            
+                             Scale ≈ 20×16 | x:[0.0…18.0] y:[-6.0…6.0]                          
 ════════════════════════════════════════════════════════════════════════════════════════════════════
                                C12   ─    ─    ─    ─    ─   C13
                                 │    ─   W12
@@ -236,21 +237,9 @@ To stop all running services and remove the containers:
 ./run_openfms.sh kill
 ```
 
----
-
-![CLI1](https://github.com/hazeezadebayo/viro_simple_fleet/blob/main/media/b.png)
-![CLI2](https://github.com/hazeezadebayo/viro_simple_fleet/blob/main/media/c.png)
-
-![running](https://github.com/hazeezadebayo/viro_simple_fleet/blob/main/media/a.png)
 
 *Social: [OpenFMS on GitHub](https://github.com/hazeezadebayo/viro_simple_fleet)*
 
 TODO
 
-- fix dashboard data analytics
-- parallel decision (1000+ robots)
-- star or mesh connection eval
-- import latex and review upgrades
-- [openrmf] graph generator and spawn robot count config
-- [paper] fix paper and resubmit
-- [patent] new patent idea from test and improvements
+- parallel decision (500+ robots)
