@@ -9,7 +9,7 @@ The codebase is organized into the following core modules:
 ```text
 OpenFMS/
 ├── config.yaml                     # Central configuration (Graph, MQTT, DB settings)
-├── docker-compose.yml              # Cluster orchestration
+├── docker/                         # Docker environment (Compose, Dockerfile, Dependencies)
 ├── fleet_management/
 │   ├── FmMain.py                   # Entry point: Initializes handlers & terminal GUI
 │   ├── FmTaskHandler.py            # Task generation, path planning, & fuzzy allocation
@@ -17,8 +17,7 @@ OpenFMS/
 │   ├── FmScheduleHandler.py        # Lifecycle management, analytics, & auto-charging
 │   ├── FmRobotSimulator.py         # VDA5050 Robot Simulator for testing
 │   └── FmInterface.py              # Script to run automated simulation scenarios
-├── submodules/                     # DB & MQTT wrappers (Order, State, Factsheet, etc.)
-└── requirements.txt                # Python dependencies
+└── submodules/                     # DB & MQTT wrappers (Order, State, Factsheet, etc.)
 ```
 
 ## 🚀 Key Features
@@ -109,7 +108,7 @@ postgres:
 Check if data is being recorded by running:
 
 ```bash
-docker exec -it openfms_v2-db-1 psql -U postgres -d postgres -c "SELECT * FROM state LIMIT 5;"
+docker exec -it openfms-db-1 psql -U postgres -d postgres -c "SELECT * FROM state LIMIT 5;"
 ```
 
 ## 🐳 Docker (Zero to Hero)
@@ -118,17 +117,30 @@ The easiest way to run OpenFMS along with all its dependencies (PostgreSQL, Mosq
 
 ### 1. Build and Run
 
-The simplest way to start the environment is using the provided startup script:
+The simplest way to start the environment is using the unified management script:
 
 ```bash
-./run_openfms.sh S1
+# See all available options
+./run_openfms.sh help
+
+# Rebuild the openfms:latest image
+./run_openfms.sh build
+
+# Boot a specific scenario 
+./run_openfms.sh up S1
+
+# Boot into interactive mode
+./run_openfms.sh up --interactive
+
+# Attach to the real-time dashboard viewer
+./run_openfms.sh up dashboard
 ```
 
 Alternatively, using direct Docker commands:
 
 ```bash
-docker compose build
-docker compose up -d
+docker compose -f docker/docker-compose.yml -p openfms build
+docker compose -f docker/docker-compose.yml -p openfms up -d
 ```
 
 ### 2. Real-time Dashboard (Recommended Visualization)
@@ -138,7 +150,12 @@ To visualize the fleet navigation, robot positions, and live analytics in real-t
 **In a separate terminal, run:**
 
 ```bash
-docker compose -p openfms_v2 up dashboard
+./run_openfms.sh up dashboard
+```
+or
+
+```bash
+docker compose -f docker/docker-compose.yml -p openfms up dashboard
 ```
 
 This will display:
@@ -195,8 +212,8 @@ cat logs/result_snapshot.txt
 
 If you need to see the raw VDA5050 messaging or internal logic traces:
 
-* **Fleet Manager Logic**: `docker compose -p openfms_v2 logs -f scenario`
-* **Robot Simulator Feed**: `docker compose -p openfms_v2 logs -f simulator`
+* **Fleet Manager Logic**: `docker compose -f docker/docker-compose.yml -p openfms logs -f scenario`
+* **Robot Simulator Feed**: `docker compose -f docker/docker-compose.yml -p openfms logs -f simulator`
 
 The easiest way to enter interactive mode is via the script:
 
@@ -206,8 +223,8 @@ The easiest way to enter interactive mode is via the script:
 
 Alternatively, to manually attach to the manager container:
 
-1. Start the stack: `docker compose -p openfms_v2 up -d`
-2. **Attach**: `docker attach openfms_v2-manager-1`
+1. Start the stack: `docker compose -f docker/docker-compose.yml -p openfms up -d`
+2. **Attach**: `docker attach openfms-manager-1`
 
 *Note: Use `Ctrl+P, Ctrl+Q` to detach without killing the process.*
 
@@ -216,7 +233,7 @@ Alternatively, to manually attach to the manager container:
 To stop all running services and remove the containers:
 
 ```bash
-docker compose down
+./run_openfms.sh kill
 ```
 
 ---

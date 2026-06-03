@@ -1,16 +1,18 @@
 services:
   mqtt:
     image: eclipse-mosquitto
+    container_name: openfms-mqtt
     pull_policy: if_not_present # never reach out to Docker Hub if image is already local
     ports:
       - "1883:1883"
       - "9001:9001"
     volumes:
-      - ./config/mosquitto.conf:/mosquitto/config/mosquitto.conf
+      - ../config/mosquitto.conf:/mosquitto/config/mosquitto.conf
     restart: unless-stopped
 
   db:
     image: postgres:13
+    container_name: openfms-db
     pull_policy: if_not_present # never reach out to Docker Hub if image is already local
     environment:
       POSTGRES_USER: postgres
@@ -21,7 +23,11 @@ services:
     restart: unless-stopped
 
   manager:
-    build: .
+    image: openfms:latest
+    container_name: openfms-manager
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
     pull_policy: if_not_present # only pull base image during --build if not already cached
     depends_on:
       - mqtt
@@ -32,14 +38,18 @@ services:
       POSTGRES_HOST: db
       PYTHONUNBUFFERED: 1
     volumes:
-      - ./config:/app/config
-      - ./logs:/app/logs
+      - ../config:/app/config
+      - ../logs:/app/logs
     stdin_open: true # docker run -i
     tty: true # docker run -t
     command: python3 fleet_management/FmMain.py
 
   simulator:
-    build: .
+    image: openfms:latest
+    container_name: openfms-simulator
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
     pull_policy: if_not_present
     depends_on:
       - mqtt
@@ -50,13 +60,17 @@ services:
       POSTGRES_HOST: db
       PYTHONUNBUFFERED: 1
     volumes:
-      - ./config:/app/config
-      - ./logs:/app/logs
+      - ../config:/app/config
+      - ../logs:/app/logs
     command: python3 fleet_management/FmRobotSimulator.py
 
   # Optional: Interface wrapper to run automated scenarios
   scenario:
-    build: .
+    image: openfms:latest
+    container_name: openfms-scenario
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
     pull_policy: if_not_present
     depends_on:
       - mqtt
@@ -66,22 +80,27 @@ services:
       MQTT_PORT: 1883
       POSTGRES_HOST: db
       PYTHONUNBUFFERED: 1
+      SCENARIO_NAME: ${SCENARIO_NAME:-S1}
     volumes:
-      - ./config:/app/config
-      - ./logs:/app/logs
+      - ../config:/app/config
+      - ../logs:/app/logs
     # Wait for manager to be ready and run scenario
-    command: /bin/bash -c "sleep 10 && python3 fleet_management/FmInterface.py run S1"
+    command: /bin/bash -c "sleep 10 && python3 fleet_management/FmInterface.py run $${SCENARIO_NAME:-S1}"
 
   # Optional: Dashboard viewer
   dashboard:
-    build: .
+    image: openfms:latest
+    container_name: openfms-dashboard
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
     pull_policy: if_not_present
     depends_on:
       - scenario
     environment:
       PYTHONUNBUFFERED: 1
     volumes:
-      - ./logs:/app/logs
+      - ../logs:/app/logs
     tty: true
     stdin_open: true
     command: /bin/sh -c "while true; do clear; if [ -f logs/live_dashboard.txt ]; then cat logs/live_dashboard.txt; else echo 'Waiting for Fleet Manager to produce dashboard...'; fi; sleep 0.5; done"

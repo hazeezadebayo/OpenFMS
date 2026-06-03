@@ -218,10 +218,10 @@ class FmTrafficHandler():
                         or (serial_number in self.task_handler.ignore_list):
                     record["halt"] = True
 
-                has_order_minute_passed = self.check_minute_passed(state_timestamp, 3.0)
-                if has_order_minute_passed:
-                    logger.warning(f"Message too old for {serial_number}: {state_timestamp}.")
-                    record["halt"] = True 
+                # has_order_minute_passed = self.check_minute_passed(state_timestamp, 3.0)
+                # if has_order_minute_passed:
+                #     logger.warning(f"Message too old for {serial_number}: {state_timestamp}.")
+                #     record["halt"] = True 
 
                 record["node_states"]   = node_states
                 record["action_states"] = action_states
@@ -451,8 +451,8 @@ class FmTrafficHandler():
                 state_rec["horizon"] = checkps[start_idx:] 
                 state_rec["horizon_release"] = checkps_release[start_idx:] 
 
-                logger.debug(f"1. Rbt : {serial_number} : -> state_base : {state_base} & last_released : {last_released} & within_range : {within_range}.") # & acknowledged : {is_acknowledged}.
-                logger.debug(f"       : -> horizon : {state_rec['horizon'] }. --> n_r: {num_released}") 
+                # logger.debug(f"1. Rbt : {serial_number} : -> state_base : {state_base} & last_released : {last_released} & within_range : {within_range}.") # & acknowledged : {is_acknowledged}.
+                # logger.debug(f"       : -> horizon : {state_rec['horizon'] }. --> n_r: {num_released}") 
 
                 # Process docking actions
                 dock_action = next((a[0] for a in order_actions_list if a and a[0].get("actionType") == "dock"),None)
@@ -843,8 +843,7 @@ class FmTrafficHandler():
     # --------------------------------------------------------------
 
     def _log_mutex(self, action, group):
-        logger.error(f"{action} Mutex Group: {group}", "FmTrafficHandler", 
-            f"fm_{action.lower()}_mutex_groups", "info")
+        logger.info(f"{action} Mutex Group: {group}")
 
     # --------------------------------------------------------------
 
@@ -959,9 +958,7 @@ class FmTrafficHandler():
         map_name = self.get_map(f_id, ctx.base, target_node)
         
         if ctx.active_map_name is not None and ctx.active_map_name != map_name:
-            logger.info(f"r_id: {r_id} elevator flag {map_name} and active map {ctx.active_map_name} problem.",
-                "FmTrafficHandler", "update_robot_status", log_level
-            )
+            logger.info(f"r_id: {r_id} elevator flag {map_name} and active map {ctx.active_map_name} problem.")
         return map_name
 
     # --------------------------------------------------------------
@@ -1069,7 +1066,7 @@ class FmTrafficHandler():
         if not is_mex_threatening:
             logger.info(f"{r_ctx.robot_id} waiting for mex_r_id {mex_ctx.robot_id}. No immediate threat or active decision node reached.")
             if mex_ctx.halt:
-                log(f"however, mex_r_id {mex_ctx.robot_id} is halted. Verify emergency protocols.")
+                logger.warning(f"however, mex_r_id {mex_ctx.robot_id} is halted. Verify emergency protocols.")
 
         return is_mex_threatening
 
@@ -1224,11 +1221,7 @@ class FmTrafficHandler():
         occupied = traffic_control
 
         paths = self.task_handler.fm_shortest_paths(start_node, target_node, task_dict)
-        logger.info(f"Checking alternate paths for {r_ctx.robot_id} --> {paths}.",
-            "FmTrafficHandler",
-            "_try_alternate_path",
-            "info",
-        )
+        logger.info(f"Checking alternate paths for {r_ctx.robot_id} --> {paths}.")
 
         if len(paths) < 2:
             return None

@@ -446,8 +446,8 @@ TODO
 **Issue:** Project containers and volumes were colliding with deleted versions of the repo inside the Linux Trash folder (`~/.local/share/Trash/...`), leading to permission errors and "ghost" logs.
 **Fix:**
 
-- Hardened `run_openfms.sh` with a dedicated project namespace: `PROJ="openfms_v2"`.
-- Enforced the project flag `-p openfms_v2` across all Docker Compose commands to ensure absolute isolation from stale environments.
+- Hardened `run_openfms.sh` with a dedicated project namespace: `PROJ="openfms"`.
+- Enforced the project flag `-p openfms` across all Docker Compose commands to ensure absolute isolation from stale environments.
 
 ### ✅ Persistence: Unified Analytics Snapshot
 
@@ -493,175 +493,17 @@ The logic remains O(N) where N is the number of nodes in the itinerary, maintain
 
 ---
 
+## 12. Docker Architecture & Execution Simplification (May 2026)
+
+### ✅ Unified Image Naming
+Transitioned from fragmented image names (`manager`, `simulator`, `dashboard`, `scenario`) to a singular `openfms:latest` monolith. This takes full advantage of Docker layer caching, significantly reducing disk usage and simplifying builds, while maintaining the microservices architecture in Compose.
+
+### ✅ Execution Refactor
+Migrated from `kill_openfms.sh` and scattered docker commands into the unified `run_openfms.sh` CLI wrapper with robust subcommands (`build`, `up`, `kill`, `clean`). 
+
+### ✅ Crash Coupling
+Implemented `--abort-on-container-exit` to tightly couple the visualization dashboard with the scenario runner. This guarantees a safe, system-wide teardown if the visualizer goes down, ensuring the backend services do not run blindly.
+
+---
+
 *End of Report*
-
-R_id: R02.
-Reserved_checkpoint: C2, Next_stop_id: C4, Moving: greenHorizon: ['C4', 'C8', 'C12', 'C8', 'C7', 'C6', 'C5', 'C11', 'C5', 'C1', 'C2', 'C26'],
-Dist_to_base: 6.0, has_order_minute_passed: True, temp_fb_dock_action_done: False, isCheckpoint: True, isStation: False,
-
->>>>>>>> : END : R02 : >>>>>>>>
->>>>>>>>
->>>>>>>
->>>>>>
->>>>>
->>>>
->>>
->>
-
-R_id: R01.
-Reserved_checkpoint: C4, Next_stop_id: C3, Moving: redHorizon: ['C3', 'C2', 'C1', 'C5', 'C11', 'C5', 'C6', 'C7', 'C8', 'C12', 'C8', 'C4', 'C28'],
-Dist_to_base: 0.0, has_order_minute_passed: True, temp_fb_dock_action_done: False, isCheckpoint: True, isStation: False,
-VisualizationSubscriber: [INFO  ] [2026-05-05 07:54:19] FmTrafficHandler._handle_robot_traffic_status - Robot R01: next_stop_id C3 occupied.
-VisualizationSubscriber: [INFO  ] [2026-05-05 07:54:19] FmTrafficHandler._handle_robot_traffic_status - R01: occupant of C3 is not yet in cache. Holding position.
-
->>>>>>>> : END : R01 : >>>>>>>>
->>>>>>>>
->>>>>>>
->>>>>>
->>>>>
->>>>
->>>
->>
-
-VisualizationSubscriber: [CRITICAL] [2026-05-05 07:54:19] FmMain.main_loop            - Traffic Control: {R01: ['C4'], R02: ['W2', 'C2', 'C3'], R03: ['C1'], R04: ['C15'], R05: ['C13'], R06: ['W13', 'C13', 'C14'], R07: ['C6'], R08: ['C20']}.
-
-VisualizationSubscriber: [INFO  ] [2026-05-05 07:54:25] FmTrafficHandler._handle_robot_traffic_status -
-R_id: R02.
-Reserved_checkpoint: C3, Next_stop_id: C4, Moving: redHorizon: ['C4', 'C8', 'C12', 'C8', 'C7', 'C6', 'C5', 'C11', 'C5', 'C1', 'C2', 'C26'],
-Dist_to_base: 0.0, has_order_minute_passed: True, temp_fb_dock_action_done: False, isCheckpoint: True, isStation: False,
-VisualizationSubscriber: [INFO  ] [2026-05-05 07:54:25] FmTrafficHandler._handle_waitpoint_case - R02 wait case completed scenario. green.
-[INFO] [2026-05-05 07:54:25,916] OrderPublisher: Publishing Order Message...
-[OrderPublisher] NEW ORDER PUBLISHED -> Robot: R02 | Nodes: ['C3', 'C3']
-
->>>>>>>> : END : R02 : >>>>>>>>
->>>>>>>> : START : R03 : >>>>>>>>
->>>>>>>> VisualizationSubscriber: [INFO  ] [2026-05-05 07:54:25] FmTaskHandler.verify_robot_fitness - Robot R03: last node id not a home dock.
->>>>>>>> VisualizationSubscriber: [WARN  ] [2026-05-05 07:54:25] FmTrafficHandler.fetch_mex_data       - Robot R01 is running late.
->>>>>>>> VisualizationSubscriber: [WARN  ] [2026-05-05 07:54:25] FmTrafficHandler.fetch_mex_data       - Robot R03 is running late.
->>>>>>>> VisualizationSubscriber: [WARN  ] [2026-05-05 07:54:25] FmTrafficHandler.fetch_mex_data       - Robot R04 is running late.
->>>>>>>> VisualizationSubscriber: [WARN  ] [2026-05-05 07:54:25] FmTrafficHandler.fetch_mex_data       - Robot R05 is running late.
->>>>>>>> VisualizationSubscriber: [WARN  ] [2026-05-05 07:54:25] FmTrafficHandler.fetch_mex_data       - Robot R07 is running late.
->>>>>>>> VisualizationSubscriber: [WARN  ] [2026-05-05 07:54:25] FmTrafficHandler.fetch_mex_data       - Robot R08 is running late.
->>>>>>>> VisualizationSubscriber: [INFO  ] [2026-05-05 07:54:25] FmTrafficHandler._handle_robot_traffic_status -
->>>>>>>> R_id: R03.
->>>>>>>> Reserved_checkpoint: C1, Next_stop_id: C2, Moving: red
->>>>>>>> Horizon: ['C2', 'C3', 'C4', 'C10', 'C4', 'C3', 'C2', 'C1', 'C25'],
->>>>>>>> Dist_to_base: 0.0, has_order_minute_passed: True, temp_fb_dock_action_done: False, isCheckpoint: True, isStation: False,
->>>>>>>> VisualizationSubscriber: [INFO  ] [2026-05-05 07:54:25] FmTrafficHandler._handle_no_conflict_case - R03 no conflict reservation. green.
->>>>>>>> [INFO] [2026-05-05 07:54:25,922] OrderPublisher: Publishing Order Message...
->>>>>>>> [OrderPublisher] NEW ORDER PUBLISHED -> Robot: R03 | Nodes: ['C1', 'C2']
->>>>>>>> : END : R03 : >>>>>>>>
->>>>>>>> : START : R01 : >>>>>>>>
->>>>>>>> VisualizationSubscriber: [INFO  ] [2026-05-05 07:54:25] FmTaskHandler.verify_robot_fitness - Robot R01: last node id not a home dock.
->>>>>>>> VisualizationSubscriber: [WARN  ] [2026-05-05 07:54:25] FmTrafficHandler.fetch_mex_data       - Robot R01 is running late.
->>>>>>>> VisualizationSubscriber: [WARN  ] [2026-05-05 07:54:25] FmTrafficHandler.fetch_mex_data       - Robot R04 is running late.
->>>>>>>> VisualizationSubscriber: [WARN  ] [2026-05-05 07:54:25] FmTrafficHandler.fetch_mex_data       - Robot R05 is running late.
->>>>>>>> VisualizationSubscriber: [WARN  ] [2026-05-05 07:54:25] FmTrafficHandler.fetch_mex_data       - Robot R07 is running late.
->>>>>>>> VisualizationSubscriber: [WARN  ] [2026-05-05 07:54:25] FmTrafficHandler.fetch_mex_data       - Robot R08 is running late.
->>>>>>>> VisualizationSubscriber: [INFO  ] [2026-05-05 07:54:25] FmTrafficHandler._handle_robot_traffic_status -
->>>>>>>> R_id: R01.
->>>>>>>> Reserved_checkpoint: C4, Next_stop_id: C3, Moving: red
->>>>>>>> Horizon: ['C3', 'C2', 'C1', 'C5', 'C11', 'C5', 'C6', 'C7', 'C8', 'C12', 'C8', 'C4', 'C28'],
->>>>>>>> Dist_to_base: 0.0, has_order_minute_passed: True, temp_fb_dock_action_done: False, isCheckpoint: True, isStation: False,
->>>>>>>> VisualizationSubscriber: [INFO  ] [2026-05-05 07:54:25] FmTrafficHandler._handle_robot_traffic_status - Robot R01: next_stop_id C3 occupied.
->>>>>>>> VisualizationSubscriber: [INFO  ] [2026-05-05 07:54:25] FmTrafficHandler._handle_active_mex_conflict - R01 started negotiation.
->>>>>>>> VisualizationSubscriber: [INFO  ] [2026-05-05 07:54:25] FmTrafficHandler.handle_priority_higher - R01: high priority case.
->>>>>>>> VisualizationSubscriber: [INFO  ] [2026-05-05 07:54:25] FmTrafficHandler.handle_priority_higher - R02 mex --> wait at W3.
->>>>>>>> VisualizationSubscriber: [INFO  ] [2026-05-05 07:54:25] FmTrafficHandler.handle_priority_higher - R02 mex --> estimated wait time 13.054279037290106.
->>>>>>>> VisualizationSubscriber: [INFO  ] [2026-05-05 07:54:25] FmTrafficHandler.update_robot_status  - r_id: R01 --> estimated wait time None.
->>>>>>>> [INFO] [2026-05-05 07:54:25,926] OrderPublisher: Publishing Order Message...
->>>>>>>> [OrderPublisher] NEW ORDER PUBLISHED -> Robot: R01 | Nodes: ['C4', 'C3']
->>>>>>>> VisualizationSubscriber: [INFO  ] [2026-05-05 07:54:25] FmTrafficHandler.update_robot_status  - mex_r_id: R02 --> mex estimated wait time 13.054279037290106.
->>>>>>>> [INFO] [2026-05-05 07:54:25,926] OrderPublisher: Swapping waitpoint with the first checkpoint.
->>>>>>>> [INFO] [2026-05-05 07:54:25,929] OrderPublisher: Robot R02: Logged duration 13.05s for order 02e816fb-5c89-4cf8-94a8-6f23948dd664. (Cumulative: 22.29s, Completed: False)
->>>>>>>> [INFO] [2026-05-05 07:54:25,929] OrderPublisher: 🛸 [WAIT RECORDED] Robot R02: Order 02e816fb-5c89-4cf8-94a8-6f23948dd664_5 wait duration 13.054279037290106
->>>>>>>> 🛸 Order Wait Time Triggered: 13.054279037290106 🛸
->>>>>>>> [INFO] [2026-05-05 07:54:25,929] OrderPublisher: Publishing Order Message...
->>>>>>>> [OrderPublisher] NEW ORDER PUBLISHED -> Robot: R02 | Nodes: ['C3', 'W3', 'C3', 'C4']
->>>>>>>> VisualizationSubscriber: [INFO  ] [2026-05-05 07:54:25] FmTrafficHandler.update_robot_status  - r_id: R01 completed negotiation.
->>>>>>>> : END : R01 : >>>>>>>>
->>>>>>>> VisualizationSubscriber: [CRITICAL] [2026-05-05 07:54:25] FmMain.main_loop            - Traffic Control: {R01: ['C4'], R02: ['C3'], R03: ['C2'], R04: ['C15'], R05: ['C13'], R06: ['W13', 'C13', 'C14'], R07: ['C6'], R08: ['C20']}.
->>>>>>>> [DEBUG] Writing dashboard loop trace - found 1 snapshots. Array has 31 lines.
->>>>>>>> ^C
->>>>>>>> ================================================================
->>>>>>>> ✅ Scenario complete.
->>>>>>>> 🔍 RealTime Nav:    docker compose -p openfms_v2 up dashboard
->>>>>>>> 📋 Output log:     cat logs/FmLogHandler.log
->>>>>>>> 🔍 Simulator feed: docker compose -p openfms_v2 logs -f simulator
->>>>>>>> 🔍 Analytics:      cat logs/result_snapshot.txt
->>>>>>>> 🛑 Stop all:       ./kill_openfms.sh
->>>>>>>> ================================================================
->>>>>>>> [~/ws/dev_env/py_code/projects/phd/OpenFMS] main? ✔ | 0 | 013
->>>>>>>>
->>>>>>>
->>>>>>
->>>>>
->>>>
->>>
->>
-
-VisualizationSubscriber: [CRITICAL] [2026-05-05 08:03:38] FmTaskHandler.request_tasks        - R_id: R01.
----------------------------------------------------------------------------------------------------------
-
-task clear status: True
-checkpoints to pass: ['C28', 'C4', 'C3', 'C2', 'C1', 'C5', 'C11', 'C5', 'C6', 'C7', 'C8', 'C12', 'C8', 'C4', 'C28']
-corresponding itinerary: [[12.0, -12.0, -0.194, 0.98], [18.0, -12.0, -0.194, 0.98], [12.0, -6.0, -0.194, 0.98], [6.0, -6.0, -0.097, 0.995], [6.0, 0.0, -0.194, 0.98], [12.0, 0.0, -0.097, 0.995], [18.0, 0.0, -0.194, 0.98], [12.0, 0.0, -0.097, 0.995], [12.0, 6.0, -0.194, 0.98], [18.0, 6.0, -0.097, 0.995], [24.0, -12.0, -0.194, 0.98], [30.0, -12.0, -0.097, 0.995], [24.0, -12.0, -0.194, 0.98], [18.0, -12.0, -0.194, 0.98], [12.0, -12.0, -0.194, 0.98]]
-landmark to visit: [5, 'high', 'transport', 'C11', 'C12', 'C28', 'C25', 'C26', 'C27', 'C29', 'C30', 'C31', 'C32']
-waitpoints: ['W1', 'W2', 'W7', 'W6', 'W4', 'W8', 'W5', 'W3']
-waitpoint's itinerary: [[7.591, 1.591, -0.194, 0.98], [7.591, -4.409, -0.194, 0.98], [19.591, 7.591, -0.194, 0.98], [13.591, 7.591, -0.097, 0.995], [19.591, -10.409, -0.097, 0.995], [25.591, -10.409, -0.097, 0.995], [13.591, 1.591, -0.194, 0.98], [13.591, -4.409, -0.194, 0.98]].
----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-
-[INFO] [2026-05-05 08:03:38,788] OrderPublisher: 🛸 [ISSUANCE] (Instance: 140622029823328) Robot R01: Recorded order 195e5666-86f6-41b4-b4a1-badda4ff9e4f at 1777968218.7887516
-[INFO] [2026-05-05 08:03:38,788] OrderPublisher: First node is not released. Skipping publication.
-
-VisualizationSubscriber: [CRITICAL] [2026-05-05 08:05:02] FmTaskHandler.request_tasks        - R_id: R02.
----------------------------------------------------------------------------------------------------------
-
-task clear status: True
-checkpoints to pass: ['C26', 'C2', 'C3', 'C4', 'C8', 'C12', 'C8', 'C7', 'C6', 'C5', 'C11', 'C5', 'C1', 'C2', 'C26']
-corresponding itinerary: [[0.0, -6.0, -0.194, 0.98], [6.0, -6.0, -0.097, 0.995], [12.0, -6.0, -0.194, 0.98], [18.0, -12.0, -0.194, 0.98], [24.0, -12.0, -0.194, 0.98], [30.0, -12.0, -0.097, 0.995], [24.0, -12.0, -0.194, 0.98], [18.0, 6.0, -0.097, 0.995], [12.0, 6.0, -0.194, 0.98], [12.0, 0.0, -0.097, 0.995], [18.0, 0.0, -0.194, 0.98], [12.0, 0.0, -0.097, 0.995], [6.0, 0.0, -0.194, 0.98], [6.0, -6.0, -0.097, 0.995], [0.0, -6.0, -0.194, 0.98]]
-landmark to visit: [5, 'low', 'transport', 'C12', 'C11', 'C26', 'C25', 'C27', 'C28', 'C29', 'C30', 'C31', 'C32']
-waitpoints: ['W5', 'W1', 'W4', 'W3', 'W2', 'W6', 'W8', 'W7']
-waitpoint's itinerary: [[13.591, 1.591, -0.194, 0.98], [7.591, 1.591, -0.194, 0.98], [19.591, -10.409, -0.097, 0.995], [13.591, -4.409, -0.194, 0.98], [7.591, -4.409, -0.194, 0.98], [13.591, 7.591, -0.097, 0.995], [25.591, -10.409, -0.097, 0.995], [19.591, 7.591, -0.194, 0.98]].
----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-
-[INFO] [2026-05-05 08:05:02,691] OrderPublisher: 🛸 [ISSUANCE] (Instance: 140331832112896) Robot R02: Recorded order 2c854234-6d19-43b2-bce1-d76515e47bd2 at 1777968302.691619
-[INFO] [2026-05-05 08:05:02,691] OrderPublisher: First node is not released. Skipping publication.
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-# if r_id, then grant mex horizon[0] and waitpoint associated [c2, w2],
-
-# while r_id gets cy_id then its current base [c2 and c1]
-
-# this means:
-
-# r_id is at C2, wants C1.
-
-# mex is at C1. therefore, r_id is granted [cy_id, c2, c1]
-
-# simultaneously, mex gets granted [C2, W2, C2]
-
-# while r_id goes to cy_id to wait temporarily, mex goes to C2.
-
-# this path ensures that neighter robot is ever blocked and system is perfectly proactive.

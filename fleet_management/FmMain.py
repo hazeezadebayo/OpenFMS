@@ -217,16 +217,38 @@ class FmMain():
             #     "FmMain", "run_cycle", "info")
             return  # not ready yet; caller's loop will retry
 
+        # Tiny sleep to prevent 100% CPU usage in while-True calling loops
+        time.sleep(0.1)
+
+        # Rate-limit the heavy management logic to run only once every 4 seconds.
+        # This prevents the thread from being hard-blocked, allowing FmInterface
+        # to smoothly process its task dispatch queue in the background.
+        current_time = time.time()
+        if current_time - getattr(self, '_last_manage_time', 0) < 4.0:
+            return
+        self._last_manage_time = current_time
+
         with self.lock:
-            time.sleep(4.0)
             for r_id in self.serial_numbers:
                 self.schedule_handler.manage_robot(self.fleetname, r_id, self.manufacturer, self.version)
 
-            # Issue terminal traffic control summary once per cycle
-            traffic_dict = getattr(self.schedule_handler.traffic_handler, 'traffic_control_dict', None)
-            if traffic_dict:
-                colored_traffic = ", ".join([f"\033[96m{r}\033[0m: \033[93m{n}\033[0m" for r, n in traffic_dict.items()]) if isinstance(traffic_dict, dict) else traffic_dict
-                logger.critical(f"Traffic Control: {{{colored_traffic}}}.")
+
+            # # Issue terminal traffic control summary once per cycle
+            # traffic_dict = getattr(self.schedule_handler.traffic_handler, 'traffic_control_dict', None)
+            # if traffic_dict:
+            #     colored_traffic = ", ".join([f"\033[96m{r}\033[0m: \033[93m{n}\033[0m" for r, n in traffic_dict.items()]) if isinstance(traffic_dict, dict) else traffic_dict
+            #     logger.critical(f"Traffic Control: {{{colored_traffic}}}.")
+
+
+            # Issue terminal traffic control summary once per cycle.
+            # traffic_control_dict only has robots with >= 1 released node grant.
+            # Robots dispatched but awaiting their first grant show as "pending".
+            traffic_dict = getattr(self.schedule_handler.traffic_handler, 'traffic_control_dict', None) or {}
+            pending = [r for r in self.serial_numbers if r not in traffic_dict]
+            active_str = ", ".join([f"\033[96m{r}\033[0m: \033[93m{n}\033[0m" for r, n in traffic_dict.items()])
+            pending_str = ", ".join([f"\033[90m{r}:pending\033[0m" for r in pending])
+            summary = ", ".join(filter(None, [active_str, pending_str]))
+            logger.critical(f"Traffic Control [{len(traffic_dict)}/{len(self.serial_numbers)} active]: {{{summary}}}.")
 
             # Issue terminal redraw once per cycle
             self.schedule_handler.traffic_handler.task_handler.visualization_handler.terminal_graph_visualization()
@@ -634,40 +656,50 @@ class FmMain():
             """
 
             # Guard: callers must always provide from_loc and to_loc explicitly.
-            # The old default 'A12' was a dev placeholder and caused spurious
-            # "not found in valid job_ids" warnings on every automated dispatch call.
             if from_loc is None or to_loc is None:
                 raise ValueError(
                     f"fm_dispatch_task: from_loc and to_loc are required. "
                     f"Got from_loc={from_loc!r}, to_loc={to_loc!r}."
                 )
 
-            # 1. Request Factsheets (Wait briefly for MQTT response to populate)
-            self.schedule_handler.fm_send_factsheet_request(self.manufacturer, self.version)
-            time.sleep(2.0) # Give MQTT time to receive factsheets
+            # One-time initialization guard.
+            # Steps 1-5 (factsheet request, map upload, itinerary processing, etc.)
+            # are already performed at startup in FmInterface. Repeating them on
+            # every dispatch blocks the single thread for ~3s per robot (2s sleep +
+            # DB/MQTT overhead), which starves run_cycle() and causes later robots
+            # to never receive their first node grant.
+            # We only run initialization if the fleet hasn't been configured yet.
+            if not self.fleetname or self.fleetname != fleet_id:
+                # 1. Request Factsheets (Wait briefly for MQTT response to populate)
+                self.schedule_handler.fm_send_factsheet_request(self.manufacturer, self.version)
+                
+                # Active wait for MQTT to populate fleets in DB
+                timeout = 2.0
+                start_wait = time.time()
+                self.fleetnames = []
+                while time.time() - start_wait < timeout:
+                    self.fleetnames = self.schedule_handler.traffic_handler.task_handler.factsheet_handler.fetch_fleets()
+                    if fleet_id in self.fleetnames:
+                        break
+                    time.sleep(0.1) # Fast poll
+                    
+                # Validate Fleet
+                if not self.fleetnames or fleet_id not in self.fleetnames:
+                    logger.critical(f"Error: Fleet {fleet_id} not found in available fleets: {self.fleetnames}")
 
-            # 2. Set Fleet Name and Fetch Fleets
-            self.fleetnames = self.schedule_handler.traffic_handler.task_handler.factsheet_handler.fetch_fleets()
+                self.fleetname = fleet_id
 
-            # Validate Fleet
-            if not self.fleetnames or fleet_id not in self.fleetnames:
-                # log viz:
-                logger.critical(f"Error: Fleet {fleet_id} not found in available fleets: {self.fleetnames}")
+                # 3. Upload Maps
+                stat = self.upload_all_maps(fleet_id)
+                if not stat:
+                    logger.critical("Error: Map upload failed.")
+                    return
 
-            self.fleetname = fleet_id
+                # 4. Process Job IDs (Landmarks)
+                self.job_ids = self.process_itinerary(self.task_dictionary.get("itinerary", []), fleet_id)
 
-            # 3. Upload Maps
-            stat = self.upload_all_maps(fleet_id)
-            if not stat:
-                # log viz:
-                logger.critical("Error: Map upload failed.")
-                return
-
-            # 4. Process Job IDs (Landmarks)
-            self.job_ids = self.process_itinerary(self.task_dictionary.get("itinerary", []), fleet_id)
-
-            # 5. Fetch Serial Numbers
-            self.serial_numbers = self.schedule_handler.traffic_handler.task_handler.factsheet_handler.fetch_serial_numbers(fleet_id)
+                # 5. Fetch Serial Numbers
+                self.serial_numbers = self.schedule_handler.traffic_handler.task_handler.factsheet_handler.fetch_serial_numbers(fleet_id)
 
             # Validate Locations
             if (from_loc not in self.job_ids) or (to_loc not in self.job_ids) or (robot_id is None):

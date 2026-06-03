@@ -76,6 +76,7 @@ class GridFleetGraph:
         custom_graph: dict = None,
         custom_chains: list[str] = None,
         edge_length: float = 6.0,
+        robot_home_map: dict = None,
     ):
         self.n_robots = num_robots
         self.n_stations = num_station_docks
@@ -86,6 +87,7 @@ class GridFleetGraph:
         self.custom_graph = custom_graph
         self.custom_chains = custom_chains
         self.edge_length = edge_length
+        self.robot_home_map = robot_home_map or {}  # {"R01": "C25", "R02": "C26", ...}
         self.nodes = {}
         self.home_nodes = []
         self.robots = []
@@ -902,12 +904,54 @@ class GridFleetGraph:
             self.nodes[wid] = wp
 
     def _assign_robots(self):
-        random.shuffle(self.home_nodes)
-        num_assign = min(self.n_robots, len(self.home_nodes))
-        for i, home in enumerate(self.home_nodes[:num_assign], 1):
+        """Assign each robot to a home node.
+
+        If robot_home_map was provided (e.g. from a named scenario), each
+        robot_id is pinned to its declared home node by looking up the node's
+        exact coordinates.  Any robot not in the map, or any node ID that
+        doesn't exist in the graph, falls back to the next unassigned home_node
+        in order.
+        """
+        # Build a quick loc_id → node lookup for the home nodes
+        home_by_id = {n.loc_id: n for n in self.home_nodes}
+        unassigned_homes = list(self.home_nodes)  # ordered fallback pool
+        used_home_ids = set()
+
+        # Determine robot IDs in order: prefer map order, append extras up to n_robots
+        mapped_robots = list(self.robot_home_map.keys())
+        extra_robots = [
+            f"R{i:02d}" for i in range(1, self.n_robots + 1)
+            if f"R{i:02d}" not in self.robot_home_map
+        ]
+        all_robot_ids = (mapped_robots + extra_robots)[:self.n_robots]
+
+        for r_id in all_robot_ids:
+            declared_home_id = self.robot_home_map.get(r_id)
+            home = None
+
+            if declared_home_id and declared_home_id in home_by_id:
+                home = home_by_id[declared_home_id]
+                used_home_ids.add(declared_home_id)
+            else:
+                # Fallback: pick next unused home node from the pool
+                for candidate in unassigned_homes:
+                    if candidate.loc_id not in used_home_ids:
+                        home = candidate
+                        used_home_ids.add(candidate.loc_id)
+                        if declared_home_id:
+                            logger.warning(
+                                f"robot_home_map: {r_id} declared home '{declared_home_id}' "
+                                f"not found in graph — falling back to {home.loc_id}"
+                            )
+                        break
+
+            if home is None:
+                logger.warning(f"No available home node for {r_id} — skipping.")
+                continue
+
             self.robots.append({
                 "fleetname": FLEET_ID,
-                "robot_serial_number": f"R{i:02d}",
+                "robot_serial_number": r_id,
                 "versions": ROBOT_VERSIONS,
                 "version": ROBOT_VERSION,
                 "manufacturer": ROBOT_MANUFACTURER,
@@ -917,6 +961,10 @@ class GridFleetGraph:
                 "lin_velocity": ROBOT_LIN_VEL,
                 "ang_velocity": ROBOT_ANG_VEL,
             })
+        logger.debug(
+            f"Assigned {len(self.robots)} robots: "
+            + ", ".join(f"{r['robot_serial_number']}@{r['initial_position'][:2]}" for r in self.robots)
+        )
 
     def validate(self):
         logger.debug("\nValidation:")

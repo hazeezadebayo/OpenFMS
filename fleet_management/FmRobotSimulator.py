@@ -121,7 +121,8 @@ import yaml
 class Robot():
     """Robot simulator with dynamic, per-message-type publishing intervals."""
     def __init__(self, fleetname, robot_serial_number, versions, version, manufacturer, connection_state,
-                 initial_position, bat_charge=50.0, lin_velocity=0.1, ang_velocity=0.04, active_map="map1"):
+                 initial_position, bat_charge=50.0, lin_velocity=0.1, ang_velocity=0.04, active_map="map1",
+                 sim_type="throttled"):
 
         self.fleetname = fleetname
         self.robot_serial_number = robot_serial_number
@@ -188,15 +189,15 @@ class Robot():
         self.mqtt_thread.daemon = True
         self.mqtt_thread.start()
 
-        # wether or not to use dynamic publisher:
-        # Start the dynamic publishing loop in a dedicated thread.
-        threading.Thread(target=self.dynamic_publish_loop, daemon=True).start()
+        self.sim_type = sim_type
 
-        # Timers for publishing state and factsheet
-        # self.create_timer(0.99, self.publish_msg)  # Publish every 1 second
-
-        # Run MQTT client loop
-        # self.mqtt_client.loop_start()
+        # Choose the publishing strategy based on the experiment configuration
+        if self.sim_type == "throttled":
+            # Start the dynamic publishing loop in a dedicated thread.
+            threading.Thread(target=self.dynamic_publish_loop, daemon=True).start()
+        else:
+            # Fixed rate: Publish everything together roughly every 1 second
+            self.create_timer(0.99, self.publish_msg)
 
 
     def on_mqtt_connect(self, client, userdata, flags, rc):
@@ -904,6 +905,15 @@ def load_robots_custom(filepath):
 
 def main():
     """Main function to run multiple robot simulators."""
+    
+    # -------------------------------------------------------------------------
+    # EXPERIMENT CONFIGURATION
+    # Options: 
+    #   "throttled"     -> Dynamic publishing intervals based on activity
+    #   "non_throttled" -> Fixed 1Hz publishing rate (the baseline)
+    # -------------------------------------------------------------------------
+    sim_publish_type = "non_throttled"
+    
     robots = []
 
     # 1. Setup the path to ../config/robots.yaml
@@ -940,6 +950,7 @@ def main():
     # 3. Initialize and start robots
     if robot_configurations:
         for config in robot_configurations:
+            config["sim_type"] = sim_publish_type
             robot = Robot(**config)
             robots.append(robot)
     else:

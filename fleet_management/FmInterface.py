@@ -105,18 +105,238 @@ SCENARIOS = {
         ],
         "num_robots": 8,
         "tasks": [
-            {"delay": 2, "robot_id": "R01", "from": "C11", "to": "C12", "type": "transport", "priority": "high", "payload": 5, "sent": False},
-            {"delay": 8, "robot_id": "R02", "from": "C12", "to": "C11", "type": "transport", "priority": "low", "payload": 5, "sent": False},
-            {"delay": 14, "robot_id": "R03", "from": "C9", "to": "C10", "type": "transport", "priority": "high", "payload": 5, "sent": False},
-            {"delay": 20, "robot_id": "R04", "from": "C10", "to": "C9", "type": "transport", "priority": "low", "payload": 5, "sent": False},
+            {"delay": 2,  "robot_id": "R01", "home": "C25", "from": "C11", "to": "C12", "type": "transport", "priority": "high", "payload": 5, "sent": False},
+            {"delay": 8,  "robot_id": "R02", "home": "C26", "from": "C12", "to": "C11", "type": "transport", "priority": "low",  "payload": 5, "sent": False},
+            {"delay": 14, "robot_id": "R03", "home": "C27", "from": "C9",  "to": "C10", "type": "transport", "priority": "high", "payload": 5, "sent": False},
+            {"delay": 20, "robot_id": "R04", "home": "C28", "from": "C10", "to": "C9",  "type": "transport", "priority": "low",  "payload": 5, "sent": False},
 
-            {"delay": 26, "robot_id": "R05", "from": "C21", "to": "C22", "type": "transport", "priority": "high", "payload": 5, "sent": False},
-            {"delay": 32, "robot_id": "R06", "from": "C22", "to": "C21", "type": "transport", "priority": "low", "payload": 5, "sent": False},
-            {"delay": 38, "robot_id": "R07", "from": "C23", "to": "C24", "type": "transport", "priority": "high", "payload": 5, "sent": False},
-            {"delay": 44, "robot_id": "R08", "from": "C24", "to": "C23", "type": "transport", "priority": "low", "payload": 5, "sent": False},
+            {"delay": 26, "robot_id": "R05", "home": "C29", "from": "C21", "to": "C22", "type": "transport", "priority": "high", "payload": 5, "sent": False},
+            {"delay": 32, "robot_id": "R06", "home": "C30", "from": "C22", "to": "C21", "type": "transport", "priority": "low",  "payload": 5, "sent": False},
+            {"delay": 38, "robot_id": "R07", "home": "C31", "from": "C23", "to": "C24", "type": "transport", "priority": "high", "payload": 5, "sent": False},
+            {"delay": 44, "robot_id": "R08", "home": "C32", "from": "C24", "to": "C23", "type": "transport", "priority": "low",  "payload": 5, "sent": False},
         ]
     },
 
+    "S5": {
+        "description": "C1-C5 / C2-C6 / C3-C7 / C4-C8: [No waitpoints on main line, both has free C_nodes], [Only one has free C_node with waitpoint option], [Both have waitpoints available]. Multiple parallel lines with cross-connections at C6/C7/C14/C15/C18/C19. Endpoints include station/charge/home docks.",
+        "custom_chains": [
+            # --- ---
+
+            # --- GROUP 1 ---
+
+            # --- ---
+            "[C25(H) - C1(C) - C5(C)]",
+            "[C1(C) - W1(W)]",
+            "[C5(C) - W5(W)]",
+            # # --- ---
+            "[C28(H) - C4(C) - C8(C)]",
+            "[C4(C) - W4(W)]",
+            "[C8(C) - W8(W)]",      
+            # # | |
+            "[C9(S) - C1(C) - C2(C) - C3(C) - C4(C) - C10(S)]", 
+            "[C11(S) - C5(C) - C6(C) - C7(C) - C8(C) - C12(S)]",       
+            # # | | 
+            "[C21(S) - C13(C) - C14(C) - C15(C) - C16(C) - C22(S)]",
+            "[C23(S) - C17(C) - C18(C) - C19(C) - C20(C) - C24(S)]",
+            # # --- --- 
+            "[C26(H) - C2(C) - C6(C) - C129(C) - C14(C) - C18(C) - C29(H)]",       
+            "[C2(C) - W2(W)]",
+            "[C6(C) - W6(W)]",
+            "[C14(C) - W14(W)]",
+            "[C18(C) - W18(W)]",
+            "[C129(C) - W129(W)]",
+            # # --- ---  
+            "[C27(H) - C3(C) - C7(C) - C130(C) - C15(C) - C19(C) - C30(H)]",        
+            "[C3(C) - W3(W)]",
+            "[C7(C) - W7(W)]",
+            "[C15(C) - W15(W)]",
+            "[C19(C) - W19(W)]",
+            "[C130(C) - W130(W)]",
+            # # --- ---  
+            "[C31(H) - C17(C) - C13(C)]",
+            "[C17(C) - W17(W)]",
+            "[C13(C) - W13(W)]",
+            # # --- ---  
+            "[C32(H) - C20(C) - C16(C)]",
+            "[C20(C) - W20(W)]",
+            "[C16(C) - W16(W)]",
+            # --- ---  
+
+            # --- GROUP 2 ---
+
+            # --- ---
+            "[C130(C) - C131(C)]",
+            # --- ---
+            "[C57(H) - C33(C) - C37(C)]",
+            "[C33(C) - W33(W)]",
+            "[C37(C) - W37(W)]",
+            # # --- ---
+            "[C60(H) - C36(C) - C40(C)]",
+            "[C36(C) - W36(W)]",
+            "[C40(C) - W40(W)]",      
+            # # | |
+            "[C41(S) - C33(C) - C34(C) - C35(C) - C36(C) - C42(S)]", 
+            "[C43(S) - C37(C) - C38(C) - C39(C) - C40(C) - C44(S)]",       
+            # # | | 
+            "[C53(S) - C45(C) - C46(C) - C47(C) - C48(C) - C54(S)]",
+            "[C55(S) - C49(C) - C50(C) - C51(C) - C52(C) - C56(S)]",
+            # # --- --- 
+            "[C58(H) - C34(C) - C38(C) - C131(C) - C46(C) - C50(C) - C61(H)]",       
+            "[C34(C) - W34(W)]",
+            "[C38(C) - W38(W)]",
+            "[C46(C) - W46(W)]",
+            "[C50(C) - W50(W)]",
+            "[C131(C) - W131(W)]",
+            # # --- ---  
+            "[C59(H) - C35(C) - C39(C) - C132(C) - C47(C) - C51(C) - C62(H)]",        
+            "[C35(C) - W35(W)]",
+            "[C39(C) - W39(W)]",
+            "[C47(C) - W47(W)]",
+            "[C51(C) - W51(W)]",
+            "[C132(C) - W132(W)]",
+            # # --- ---  
+            "[C63(H) - C49(C) - C45(C)]",
+            "[C49(C) - W49(W)]",
+            "[C45(C) - W45(W)]",
+            # # --- ---  
+            "[C64(H) - C52(C) - C48(C)]",
+            "[C52(C) - W52(W)]",
+            "[C48(C) - W48(W)]",
+            # --- ---
+
+            # --- GROUP 3 ---
+
+            # --- ---
+            "[C132(C) - C133(C)]",
+            # --- ---
+            "[C89(H) - C65(C) - C69(C)]",
+            "[C65(C) - W65(W)]",
+            "[C69(C) - W69(W)]",
+            # --- ---
+            "[C92(H) - C68(C) - C72(C)]",
+            "[C68(C) - W68(W)]",
+            "[C72(C) - W72(W)]",
+            # | |
+            "[C73(S) - C65(C) - C66(C) - C67(C) - C68(C) - C74(S)]",
+            "[C75(S) - C69(C) - C70(C) - C71(C) - C72(C) - C76(S)]",
+            # | |
+            "[C85(S) - C77(C) - C78(C) - C79(C) - C80(C) - C86(S)]",
+            "[C87(S) - C81(C) - C82(C) - C83(C) - C84(C) - C88(S)]",
+            # --- ---
+            "[C90(H) - C66(C) - C70(C) - C133(C) - C78(C) - C82(C) - C93(H)]",
+            "[C66(C) - W66(W)]",
+            "[C70(C) - W70(W)]",
+            "[C78(C) - W78(W)]",
+            "[C82(C) - W82(W)]",
+            "[C133(C) - W133(W)]",
+            # --- ---
+            "[C91(H) - C67(C) - C71(C) - C134(C) - C79(C) - C83(C) - C94(H)]",
+            "[C67(C) - W67(W)]",
+            "[C71(C) - W71(W)]",
+            "[C79(C) - W79(W)]",
+            "[C83(C) - W83(W)]",
+            "[C134(C) - W134(W)]",
+            # --- ---
+            "[C95(H) - C81(C) - C77(C)]",
+            "[C81(C) - W81(W)]",
+            "[C77(C) - W77(W)]",
+            # --- ---
+            "[C96(H) - C84(C) - C80(C)]",
+            "[C84(C) - W84(W)]",
+            "[C80(C) - W80(W)]",
+            # --- ---
+
+            # --- GROUP 4 ---
+
+            # --- ---
+            "[C134(C) - C135(C)]",
+            # --- ---
+            "[C121(H) - C97(C) - C101(C)]",
+            "[C97(C) - W97(W)]",
+            "[C101(C) - W101(W)]",
+            # --- ---
+            "[C124(H) - C100(C) - C104(C)]",
+            "[C100(C) - W100(W)]",
+            "[C104(C) - W104(W)]",
+            # | |
+            "[C105(S) - C97(C) - C98(C) - C99(C) - C100(C) - C106(S)]",
+            "[C107(S) - C101(C) - C102(C) - C103(C) - C104(C) - C108(S)]",
+            # | |
+            "[C117(S) - C109(C) - C110(C) - C111(C) - C112(C) - C118(S)]",
+            "[C119(S) - C113(C) - C114(C) - C115(C) - C116(C) - C120(S)]",
+            # --- ---
+            "[C122(H) - C98(C) - C102(C) - C135(C) - C110(C) - C114(C) - C125(H)]",
+            "[C98(C) - W98(W)]",
+            "[C102(C) - W102(W)]",
+            "[C110(C) - W110(W)]",
+            "[C114(C) - W114(W)]",
+            "[C135(C) - W135(W)]",
+            # --- ---
+            "[C123(H) - C99(C) - C103(C) - C136(C) - C111(C) - C115(C) - C126(H)]",
+            "[C99(C) - W99(W)]",
+            "[C103(C) - W103(W)]",
+            "[C111(C) - W111(W)]",
+            "[C115(C) - W115(W)]",
+            "[C136(C) - W136(W)]",
+            # --- ---
+            "[C127(H) - C113(C) - C109(C)]",
+            "[C113(C) - W113(W)]",
+            "[C109(C) - W109(W)]",
+            # --- ---
+            "[C128(H) - C116(C) - C112(C)]",
+            "[C116(C) - W116(W)]",
+            "[C112(C) - W112(W)]",
+            # --- ---
+            # --- ---
+            # --- ---
+        ],
+        "num_robots": 2,
+        "tasks": [
+            # GROUP 1
+            {"delay": 2,  "robot_id": "R01", "home": "C25", "from": "C11", "to": "C12", "type": "transport", "priority": "high", "payload": 5, "sent": False},
+            {"delay": 5,  "robot_id": "R02", "home": "C28", "from": "C12", "to": "C11", "type": "transport", "priority": "low",  "payload": 5, "sent": False},
+            # {"delay": 8,  "robot_id": "R03", "home": "C26", "from": "C9",  "to": "C10", "type": "transport", "priority": "high", "payload": 5, "sent": False},
+            # {"delay": 11, "robot_id": "R04", "home": "C27", "from": "C10", "to": "C9",  "type": "transport", "priority": "low",  "payload": 5, "sent": False},
+
+            # {"delay": 14, "robot_id": "R05", "home": "C29", "from": "C21", "to": "C22", "type": "transport", "priority": "high", "payload": 5, "sent": False},
+            # {"delay": 17, "robot_id": "R06", "home": "C31", "from": "C22", "to": "C21", "type": "transport", "priority": "low",  "payload": 5, "sent": False},
+            # {"delay": 20, "robot_id": "R07", "home": "C30", "from": "C23", "to": "C24", "type": "transport", "priority": "high", "payload": 5, "sent": False},
+            # {"delay": 23, "robot_id": "R08", "home": "C32", "from": "C24", "to": "C23", "type": "transport", "priority": "low",  "payload": 5, "sent": False},
+
+            # # GROUP 2
+            # {"delay": 26, "robot_id": "R09", "home": "C57", "from": "C43", "to": "C44", "type": "transport", "priority": "high", "payload": 5, "sent": False},
+            # {"delay": 29, "robot_id": "R10", "home": "C60", "from": "C44", "to": "C43", "type": "transport", "priority": "low",  "payload": 5, "sent": False},
+            # {"delay": 32, "robot_id": "R11", "home": "C58", "from": "C41", "to": "C42", "type": "transport", "priority": "high", "payload": 5, "sent": False},
+            # {"delay": 35, "robot_id": "R12", "home": "C59", "from": "C42", "to": "C41", "type": "transport", "priority": "low",  "payload": 5, "sent": False},
+
+            # {"delay": 38, "robot_id": "R13", "home": "C63", "from": "C53", "to": "C54", "type": "transport", "priority": "high", "payload": 5, "sent": False},
+            # {"delay": 41, "robot_id": "R14", "home": "C61", "from": "C54", "to": "C53", "type": "transport", "priority": "low",  "payload": 5, "sent": False},
+            # {"delay": 44, "robot_id": "R15", "home": "C62", "from": "C55", "to": "C56", "type": "transport", "priority": "high", "payload": 5, "sent": False},
+            # {"delay": 47, "robot_id": "R16", "home": "C64", "from": "C56", "to": "C55", "type": "transport", "priority": "low",  "payload": 5, "sent": False},
+
+            # # GROUP 3
+            # {"delay": 60, "robot_id": "R17", "home": "C89", "from": "C75", "to": "C76", "type": "transport", "priority": "high", "payload": 5, "sent": False},
+            # {"delay": 63, "robot_id": "R18", "home": "C92", "from": "C76", "to": "C75", "type": "transport", "priority": "low",  "payload": 5, "sent": False},
+            # {"delay": 66, "robot_id": "R19", "home": "C90", "from": "C73", "to": "C74", "type": "transport", "priority": "high", "payload": 5, "sent": False},
+            # {"delay": 69, "robot_id": "R20", "home": "C91", "from": "C74", "to": "C73", "type": "transport", "priority": "low",  "payload": 5, "sent": False},
+
+            # {"delay": 72, "robot_id": "R21", "home": "C95", "from": "C85", "to": "C86", "type": "transport", "priority": "high", "payload": 5, "sent": False},
+            # {"delay": 75, "robot_id": "R22", "home": "C93", "from": "C86", "to": "C85", "type": "transport", "priority": "low",  "payload": 5, "sent": False},
+            # {"delay": 78, "robot_id": "R23", "home": "C94", "from": "C87", "to": "C88", "type": "transport", "priority": "high", "payload": 5, "sent": False},
+            # {"delay": 81, "robot_id": "R24", "home": "C96", "from": "C88", "to": "C87", "type": "transport", "priority": "low",  "payload": 5, "sent": False},
+
+            # # GROUP 4           
+            # {"delay": 84,  "robot_id": "R25", "home": "C121", "from": "C107", "to": "C108", "type": "transport", "priority": "high", "payload": 5, "sent": False},
+            # {"delay": 87,  "robot_id": "R26", "home": "C124", "from": "C108", "to": "C107", "type": "transport", "priority": "low",  "payload": 5, "sent": False},
+            # {"delay": 90,  "robot_id": "R27", "home": "C122", "from": "C105", "to": "C106", "type": "transport", "priority": "high", "payload": 5, "sent": False},
+            # {"delay": 93,  "robot_id": "R28", "home": "C123", "from": "C106", "to": "C105", "type": "transport", "priority": "low",  "payload": 5, "sent": False},
+
+            # {"delay": 96,  "robot_id": "R29", "home": "C127", "from": "C117", "to": "C118", "type": "transport", "priority": "high", "payload": 5, "sent": False},
+            # {"delay": 99,  "robot_id": "R30", "home": "C125", "from": "C118", "to": "C117", "type": "transport", "priority": "low",  "payload": 5, "sent": False},
+            # {"delay": 102, "robot_id": "R31", "home": "C126", "from": "C119", "to": "C120", "type": "transport", "priority": "high", "payload": 5, "sent": False},
+            # {"delay": 105, "robot_id": "R32", "home": "C128", "from": "C120", "to": "C119", "type": "transport", "priority": "low",  "payload": 5, "sent": False},
+        ]
+    },
 }
 
 
@@ -177,13 +397,22 @@ if __name__ == "__main__":
         if mode.startswith('S') and mode in SCENARIOS:
             print(f"--- Generating Graph for Scenario: {mode} ---")
             scenario = SCENARIOS[mode]
+            # Build robot_id → home_node_id map from tasks that declare a home.
+            # Robots without a home entry are not included (FmSimGenerator falls
+            # back to sequential assignment for those).
+            robot_home_map = {
+                t["robot_id"]: t["home"]
+                for t in scenario["tasks"]
+                if "home" in t
+            }
             g = GridFleetGraph(
                 num_robots=scenario["num_robots"],
                 num_station_docks=0,
                 num_charge_docks=0,
                 num_waitpoints=0,
                 density_factor=0.0,
-                custom_chains=scenario["custom_chains"]
+                custom_chains=scenario["custom_chains"],
+                robot_home_map=robot_home_map if robot_home_map else None,
             )         
         # ==========================================
         # CASE 2: PROCEDURAL SCALING (N10, N50, etc.)
@@ -336,7 +565,7 @@ if __name__ == "__main__":
     fm.fleetnames = fm.schedule_handler.traffic_handler.task_handler.factsheet_handler.fetch_fleets()
     fm.fleetname = "kullar" if "kullar" in fm.fleetnames else None
     fm.upload_all_maps(fm.fleetname)
-    # fm.job_ids = fm.process_itinerary(fm.task_dictionary.get("itinerary", []), fm.fleetname)
+    fm.job_ids = fm.process_itinerary(fm.task_dictionary.get("itinerary", []), fm.fleetname)
     fm.serial_numbers = fm.schedule_handler.traffic_handler.task_handler.factsheet_handler.fetch_serial_numbers(fm.fleetname)
     
     # # Categorize docks for event monitoring (simulation completion and station arrivals)

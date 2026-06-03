@@ -719,6 +719,17 @@ class FmScheduleHandler():
             serial_number = conn_rec[serial_number_index+1]
             _ = conn_rec[connection_state_index+1]
 
+            # Check if we already have a factsheet for this robot in cache
+            if serial_number in self.traffic_handler.task_handler.factsheet_handler.cache:
+                continue
+                
+            # If not in cache, check the database (handles restarts)
+            db_serial, _, _, _, _, _, _ = self.traffic_handler.task_handler.factsheet_handler.fetch_data(
+                self.fleetname, serial_number, m_id
+            )
+            if db_serial == serial_number:
+                continue
+
             # request their respective factsheet so we can ascertain the f_id.
             factsheet_req_action = self.traffic_handler.task_handler.instant_actions_handler.create_action("factsheetRequest",{})
             with self._sched_lock:
