@@ -9,3 +9,7 @@ venv/
 .vscode/
 .idea/
 logs/
+scratch/
+project_report.md
+output_log.md
+git_workflow.md
