@@ -90,6 +90,14 @@ class FmTrafficHandler():
         self.mutex_groups = [] # Store list of lists e.g. [['C1', 'C2'], ['C10', 'C11']]
         self.collision_tracker = 0
         self.robots_in_collision = set()
+        # Last-resort cycle-break state: r_id -> (base, horizon0, since_epoch).
+        # Consulted ONLY after relocate/reroute/verified-redirect already failed.
+        # Robots on any success path never accumulate eligibility (see _note_hold).
+        self._hold_since: Dict[str, Tuple[str, str, float]] = {}
+        # Seconds parked on the identical (base, next) demand before a proven
+        # 2-cycle becomes eligible for breaking. Transient contention (seconds
+        # to low minutes in all healthy traces) must never reach this branch.
+        self.HOLD_TIMEOUT = 120.0
 
         # online_robots lives here (traffic management layer) not in StateSubscriber (data layer).
         # Semantics: "robot is a live participant in the current fleet session".
@@ -705,6 +713,7 @@ class FmTrafficHandler():
             # ------------------------------
             if is_notdocked:
                 self._handle_dock_reminder(f_id, _r_id, m_id, v_id, r_ctx)
+                self._clear_hold(_r_id)
                 return
 
             # ------------------------------------------------------------------
@@ -726,6 +735,7 @@ class FmTrafficHandler():
                 # --- DETERMINE MEX AND THREAT LEVEL---
                 if (not mex_ctx.robot_id) or (not self._handle_conflict_threat_level(mex_ctx, r_ctx)):
                     logger.info(f"{_r_id}: occupant unknown → holding.")
+                    self._note_hold(_r_id, r_ctx.base, next_stop)
                     return
 
                 # Try upgraded conflict strategies in order of preference
@@ -736,6 +746,7 @@ class FmTrafficHandler():
                     r_plan, mex_plan = relocate
                     self.publish_route_plan(r_plan)
                     self.publish_route_plan(mex_plan)
+                    self._clear_hold(_r_id)
                     return
 
                 reroute = self._handle_conflict_reroute_plans(f_id, _r_id, m_id, v_id, 
@@ -745,6 +756,7 @@ class FmTrafficHandler():
                     r_plan, mex_plan = reroute
                     self.publish_route_plan(r_plan)
                     self.publish_route_plan(mex_plan)
+                    self._clear_hold(_r_id)
                     return
 
                 redirect = self._handle_conflict_redirect_plans(f_id, _r_id, m_id, v_id, 
@@ -752,12 +764,16 @@ class FmTrafficHandler():
                 logger.debug("\033[93m DEBUG ----------------- 🛸 4 🛸 ----------------- \033[0m")  
                 if redirect and any(redirect):
                     r_plan, mex_plan = redirect
-                    self.publish_route_plan(r_plan)
-                    self.publish_route_plan(mex_plan)
+                    if r_plan is not None:
+                        self.publish_route_plan(r_plan)
+                    if mex_plan is not None:
+                        self.publish_route_plan(mex_plan)
+                    self._clear_hold(_r_id)
                     return
 
                 # Fallback if nothing worked
                 logger.warning(f"Robot {_r_id}: Conflict at {next_stop} but no resolution strategy succeeded.")
+                self._note_hold(_r_id, r_ctx.base, next_stop)
                 return
 
             # ---------------------------------------------------------
@@ -766,9 +782,25 @@ class FmTrafficHandler():
             logger.debug("\033[93m DEBUG ----------------- 🛸 5 🛸 ----------------- \033[0m")
             plan = self._handle_regular_plan(f_id, _r_id, m_id, v_id, r_ctx)
             self.publish_route_plan(plan)
+            self._clear_hold(_r_id)
 
         except (ValueError, TypeError) as err:
             logger.warning(f"Error in traffic logic: {err}")
+
+    def _note_hold(self, r_id: str, base: str, nxt: str):
+        """Stamp (base, next) on change only; repeat ticks must not refresh the clock."""
+        prev = self._hold_since.get(r_id)
+        if prev is None or prev[0] != base or prev[1] != nxt:
+            self._hold_since[r_id] = (base, nxt, time.time())
+
+    def _clear_hold(self, r_id: str):
+        self._hold_since.pop(r_id, None)
+
+    def _hold_expired(self, r_id: str, base: str, nxt: str) -> bool:
+        """True only if parked on the identical (base, next) past HOLD_TIMEOUT."""
+        prev = self._hold_since.get(r_id)
+        return bool(prev and prev[0] == base and prev[1] == nxt
+                    and (time.time() - prev[2]) > self.HOLD_TIMEOUT)
 
     # --------------------------------------------------------------
 
@@ -1196,6 +1228,48 @@ class FmTrafficHandler():
                     r_goal, mex_goal = other_goal, active_goal
 
                 return self._generate_dual_plans(f_id, r_id, m_id, v_id, r_ctx, mex_ctx, r_goal, mex_goal)
+
+            # --- Last-resort 2-cycle break (fires only on proven, persistent cycles) ---
+            # Reached only when: relocate+reroute+verified-redirect all failed for
+            # this pair, yet a legal spoof cy exists. Demanding global clearance
+            # inside a wait-for cycle is demanding the impossible, so if the pair
+            # is a proven 2-cycle AND the yielder has been parked on the identical
+            # demand past HOLD_TIMEOUT, vacate along the verified-free cy anyway.
+            # The yielder stops at cy (release=[cy_id] only — never released into
+            # an occupied node); the waiter then advances through existing logic.
+            other_nodes = self.traffic_control_dict.get(other_ctx.robot_id, []) if other_ctx else []
+            is_2cycle = (other_ctx is not None and other_ctx.horizon
+                         and other_ctx.horizon[0] == active_ctx.base
+                         and active_ctx.horizon[0] in other_nodes)
+            # Re-check Check 1 at fire time: the cy validated inside _try_temp_wait
+            # reflects the processed robot's view and may have gone stale.
+            cy_taken_now = any(cy_id in nodes
+                               for rid, nodes in self.traffic_control_dict.items()
+                               if rid != active_ctx.robot_id)
+            if (cy_id and not cy_taken_now and is_2cycle
+                    and self._hold_expired(active_ctx.robot_id, active_ctx.base, active_ctx.horizon[0])):
+                if active_ctx == r_ctx:
+                    rob_id, mfr, ver = r_id, m_id, v_id
+                else:
+                    rob_id, mfr, ver = (mex_ctx.robot_id, mex_ctx.manufacturer, mex_ctx.version)
+                # Keep trajectory insertions (cy must resolve inside the plan's
+                # node path) but authorize ONLY the verified-free cy step.
+                wanted_node = active_ctx.horizon[0]
+                active_ctx.checkpoints.insert(1, cy_id)
+                active_ctx.checkpoints.insert(2, active_ctx.base)
+                active_ctx.checkp_itinerary.insert(1, cy_pos)
+                active_ctx.checkp_itinerary.insert(2, active_ctx.checkp_itinerary[0])
+                active_ctx.horizon[0:0] = [cy_id, active_ctx.base]
+                y_map = self._sync_map_and_actions(
+                    f_id, rob_id, mfr, ver, active_ctx, active_ctx.horizon[0], "warn")
+                y_plan = self._build_route_plan(
+                    f_id, rob_id, mfr, ver, active_ctx, y_map, [cy_id])
+                self._hold_since.pop(active_ctx.robot_id, None)
+                logger.info(f"CYCLE_BREAK Fleet {f_id} <-> {rob_id}: 2-cycle broken via {cy_id} "
+                            f"(was holding {active_ctx.base}, wanted {wanted_node}).")
+                if active_ctx == r_ctx:
+                    return (y_plan, None)
+                return (None, y_plan)
 
         logger.info(f"Fleet {f_id} <-> {r_id} Reroute_status --> False.")
         return None, None

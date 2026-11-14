@@ -290,54 +290,85 @@ SCENARIOS = {
             # --- ---
             # --- ---
         ],
-        "num_robots": 2,
+        "num_robots": 32,
         "tasks": [
             # GROUP 1
             {"delay": 2,  "robot_id": "R01", "home": "C25", "from": "C11", "to": "C12", "type": "transport", "priority": "high", "payload": 5, "sent": False},
             {"delay": 5,  "robot_id": "R02", "home": "C28", "from": "C12", "to": "C11", "type": "transport", "priority": "low",  "payload": 5, "sent": False},
-            # {"delay": 8,  "robot_id": "R03", "home": "C26", "from": "C9",  "to": "C10", "type": "transport", "priority": "high", "payload": 5, "sent": False},
-            # {"delay": 11, "robot_id": "R04", "home": "C27", "from": "C10", "to": "C9",  "type": "transport", "priority": "low",  "payload": 5, "sent": False},
+            {"delay": 8,  "robot_id": "R03", "home": "C26", "from": "C9",  "to": "C10", "type": "transport", "priority": "high", "payload": 5, "sent": False},
+            {"delay": 11, "robot_id": "R04", "home": "C27", "from": "C10", "to": "C9",  "type": "transport", "priority": "low",  "payload": 5, "sent": False},
 
-            # {"delay": 14, "robot_id": "R05", "home": "C29", "from": "C21", "to": "C22", "type": "transport", "priority": "high", "payload": 5, "sent": False},
-            # {"delay": 17, "robot_id": "R06", "home": "C31", "from": "C22", "to": "C21", "type": "transport", "priority": "low",  "payload": 5, "sent": False},
-            # {"delay": 20, "robot_id": "R07", "home": "C30", "from": "C23", "to": "C24", "type": "transport", "priority": "high", "payload": 5, "sent": False},
-            # {"delay": 23, "robot_id": "R08", "home": "C32", "from": "C24", "to": "C23", "type": "transport", "priority": "low",  "payload": 5, "sent": False},
+            {"delay": 14, "robot_id": "R05", "home": "C29", "from": "C21", "to": "C22", "type": "transport", "priority": "high", "payload": 5, "sent": False},
+            {"delay": 17, "robot_id": "R06", "home": "C31", "from": "C22", "to": "C21", "type": "transport", "priority": "low",  "payload": 5, "sent": False},
+            {"delay": 20, "robot_id": "R07", "home": "C30", "from": "C23", "to": "C24", "type": "transport", "priority": "high", "payload": 5, "sent": False},
+            {"delay": 23, "robot_id": "R08", "home": "C32", "from": "C24", "to": "C23", "type": "transport", "priority": "low",  "payload": 5, "sent": False},
 
             # # GROUP 2
-            # {"delay": 26, "robot_id": "R09", "home": "C57", "from": "C43", "to": "C44", "type": "transport", "priority": "high", "payload": 5, "sent": False},
-            # {"delay": 29, "robot_id": "R10", "home": "C60", "from": "C44", "to": "C43", "type": "transport", "priority": "low",  "payload": 5, "sent": False},
-            # {"delay": 32, "robot_id": "R11", "home": "C58", "from": "C41", "to": "C42", "type": "transport", "priority": "high", "payload": 5, "sent": False},
-            # {"delay": 35, "robot_id": "R12", "home": "C59", "from": "C42", "to": "C41", "type": "transport", "priority": "low",  "payload": 5, "sent": False},
+            {"delay": 26, "robot_id": "R09", "home": "C57", "from": "C43", "to": "C44", "type": "transport", "priority": "high", "payload": 5, "sent": False},
+            {"delay": 29, "robot_id": "R10", "home": "C60", "from": "C44", "to": "C43", "type": "transport", "priority": "low",  "payload": 5, "sent": False},
+            {"delay": 32, "robot_id": "R11", "home": "C58", "from": "C41", "to": "C42", "type": "transport", "priority": "high", "payload": 5, "sent": False},
+            {"delay": 35, "robot_id": "R12", "home": "C59", "from": "C42", "to": "C41", "type": "transport", "priority": "low",  "payload": 5, "sent": False},
 
-            # {"delay": 38, "robot_id": "R13", "home": "C63", "from": "C53", "to": "C54", "type": "transport", "priority": "high", "payload": 5, "sent": False},
-            # {"delay": 41, "robot_id": "R14", "home": "C61", "from": "C54", "to": "C53", "type": "transport", "priority": "low",  "payload": 5, "sent": False},
-            # {"delay": 44, "robot_id": "R15", "home": "C62", "from": "C55", "to": "C56", "type": "transport", "priority": "high", "payload": 5, "sent": False},
-            # {"delay": 47, "robot_id": "R16", "home": "C64", "from": "C56", "to": "C55", "type": "transport", "priority": "low",  "payload": 5, "sent": False},
+            {"delay": 38, "robot_id": "R13", "home": "C63", "from": "C53", "to": "C54", "type": "transport", "priority": "high", "payload": 5, "sent": False},
+            {"delay": 41, "robot_id": "R14", "home": "C61", "from": "C54", "to": "C53", "type": "transport", "priority": "low",  "payload": 5, "sent": False},
+            {"delay": 44, "robot_id": "R15", "home": "C62", "from": "C55", "to": "C56", "type": "transport", "priority": "high", "payload": 5, "sent": False},
+            {"delay": 47, "robot_id": "R16", "home": "C64", "from": "C56", "to": "C55", "type": "transport", "priority": "low",  "payload": 5, "sent": False},
 
             # # GROUP 3
-            # {"delay": 60, "robot_id": "R17", "home": "C89", "from": "C75", "to": "C76", "type": "transport", "priority": "high", "payload": 5, "sent": False},
-            # {"delay": 63, "robot_id": "R18", "home": "C92", "from": "C76", "to": "C75", "type": "transport", "priority": "low",  "payload": 5, "sent": False},
-            # {"delay": 66, "robot_id": "R19", "home": "C90", "from": "C73", "to": "C74", "type": "transport", "priority": "high", "payload": 5, "sent": False},
-            # {"delay": 69, "robot_id": "R20", "home": "C91", "from": "C74", "to": "C73", "type": "transport", "priority": "low",  "payload": 5, "sent": False},
+            {"delay": 60, "robot_id": "R17", "home": "C89", "from": "C75", "to": "C76", "type": "transport", "priority": "high", "payload": 5, "sent": False},
+            {"delay": 63, "robot_id": "R18", "home": "C92", "from": "C76", "to": "C75", "type": "transport", "priority": "low",  "payload": 5, "sent": False},
+            {"delay": 66, "robot_id": "R19", "home": "C90", "from": "C73", "to": "C74", "type": "transport", "priority": "high", "payload": 5, "sent": False},
+            {"delay": 69, "robot_id": "R20", "home": "C91", "from": "C74", "to": "C73", "type": "transport", "priority": "low",  "payload": 5, "sent": False},
 
-            # {"delay": 72, "robot_id": "R21", "home": "C95", "from": "C85", "to": "C86", "type": "transport", "priority": "high", "payload": 5, "sent": False},
-            # {"delay": 75, "robot_id": "R22", "home": "C93", "from": "C86", "to": "C85", "type": "transport", "priority": "low",  "payload": 5, "sent": False},
-            # {"delay": 78, "robot_id": "R23", "home": "C94", "from": "C87", "to": "C88", "type": "transport", "priority": "high", "payload": 5, "sent": False},
-            # {"delay": 81, "robot_id": "R24", "home": "C96", "from": "C88", "to": "C87", "type": "transport", "priority": "low",  "payload": 5, "sent": False},
+            {"delay": 72, "robot_id": "R21", "home": "C95", "from": "C85", "to": "C86", "type": "transport", "priority": "high", "payload": 5, "sent": False},
+            {"delay": 75, "robot_id": "R22", "home": "C93", "from": "C86", "to": "C85", "type": "transport", "priority": "low",  "payload": 5, "sent": False},
+            {"delay": 78, "robot_id": "R23", "home": "C94", "from": "C87", "to": "C88", "type": "transport", "priority": "high", "payload": 5, "sent": False},
+            {"delay": 81, "robot_id": "R24", "home": "C96", "from": "C88", "to": "C87", "type": "transport", "priority": "low",  "payload": 5, "sent": False},
 
-            # # GROUP 4           
-            # {"delay": 84,  "robot_id": "R25", "home": "C121", "from": "C107", "to": "C108", "type": "transport", "priority": "high", "payload": 5, "sent": False},
-            # {"delay": 87,  "robot_id": "R26", "home": "C124", "from": "C108", "to": "C107", "type": "transport", "priority": "low",  "payload": 5, "sent": False},
-            # {"delay": 90,  "robot_id": "R27", "home": "C122", "from": "C105", "to": "C106", "type": "transport", "priority": "high", "payload": 5, "sent": False},
-            # {"delay": 93,  "robot_id": "R28", "home": "C123", "from": "C106", "to": "C105", "type": "transport", "priority": "low",  "payload": 5, "sent": False},
+            # # GROUP 4
+            {"delay": 84,  "robot_id": "R25", "home": "C121", "from": "C107", "to": "C108", "type": "transport", "priority": "high", "payload": 5, "sent": False},
+            {"delay": 87,  "robot_id": "R26", "home": "C124", "from": "C108", "to": "C107", "type": "transport", "priority": "low",  "payload": 5, "sent": False},
+            {"delay": 90,  "robot_id": "R27", "home": "C122", "from": "C105", "to": "C106", "type": "transport", "priority": "high", "payload": 5, "sent": False},
+            {"delay": 93,  "robot_id": "R28", "home": "C123", "from": "C106", "to": "C105", "type": "transport", "priority": "low",  "payload": 5, "sent": False},
 
-            # {"delay": 96,  "robot_id": "R29", "home": "C127", "from": "C117", "to": "C118", "type": "transport", "priority": "high", "payload": 5, "sent": False},
-            # {"delay": 99,  "robot_id": "R30", "home": "C125", "from": "C118", "to": "C117", "type": "transport", "priority": "low",  "payload": 5, "sent": False},
-            # {"delay": 102, "robot_id": "R31", "home": "C126", "from": "C119", "to": "C120", "type": "transport", "priority": "high", "payload": 5, "sent": False},
-            # {"delay": 105, "robot_id": "R32", "home": "C128", "from": "C120", "to": "C119", "type": "transport", "priority": "low",  "payload": 5, "sent": False},
+            {"delay": 96,  "robot_id": "R29", "home": "C127", "from": "C117", "to": "C118", "type": "transport", "priority": "high", "payload": 5, "sent": False},
+            {"delay": 99,  "robot_id": "R30", "home": "C125", "from": "C118", "to": "C117", "type": "transport", "priority": "low",  "payload": 5, "sent": False},
+            {"delay": 102, "robot_id": "R31", "home": "C126", "from": "C119", "to": "C120", "type": "transport", "priority": "high", "payload": 5, "sent": False},
+            {"delay": 105, "robot_id": "R32", "home": "C128", "from": "C120", "to": "C119", "type": "transport", "priority": "low",  "payload": 5, "sent": False},
         ]
     },
 }
+
+
+def experiment(robot_count: int) -> dict:
+    """
+    Build an 'experiment' scenario dynamically:
+      - robot_count <= 8  -> S4 base (8-robot layout)
+      - robot_count  >  8  -> S5 base (32-robot layout)
+    The returned scenario keeps the base chains/tasks, but keeps only
+    the first `robot_count` robots (R01..R<robot_count>) and sets
+    num_robots = robot_count.
+    """
+    count = int(robot_count)
+    if count < 1 or count > 32:
+        raise ValueError(f"experiment supports 1..32 robots, got {count}")
+    base = SCENARIOS["S4"] if count <= 8 else SCENARIOS["S5"]
+    tasks = sorted(
+        (t for t in base["tasks"] if int(str(t["robot_id"])[1:]) <= count),
+        key=lambda t: (t.get("delay", 0), int(str(t["robot_id"])[1:])),
+    )
+    return {**base, "tasks": tasks, "num_robots": count}
+
+
+def get_scenario(mode: str):
+    """Resolve a mode name to a scenario dict (building E<N> on the fly)."""
+    if mode.startswith('E'):
+        try:
+            return experiment(int(mode[1:]))
+        except ValueError:
+            print(f"❌ Error: Invalid experiment mode '{mode}'. Use 'E' followed by 1..32 (e.g. E4).")
+            sys.exit(1)
+    return SCENARIOS.get(mode)
 
 
 # ────────────────────────────────────────────────
@@ -394,9 +425,9 @@ if __name__ == "__main__":
         # ==========================================
         # CASE 1: FIXED SCENARIOS (S1, S2, etc.)
         # ==========================================
-        if mode.startswith('S') and mode in SCENARIOS:
+        scenario = get_scenario(mode)
+        if scenario is not None:
             print(f"--- Generating Graph for Scenario: {mode} ---")
-            scenario = SCENARIOS[mode]
             # Build robot_id → home_node_id map from tasks that declare a home.
             # Robots without a home entry are not included (FmSimGenerator falls
             # back to sequential assignment for those).
@@ -478,9 +509,10 @@ if __name__ == "__main__":
     start_time = time.time()
     task_trigger_time = 5 
     
-    if mode in SCENARIOS:
-        tasks = SCENARIOS[mode]["tasks"]
-        print(f"Goal: {SCENARIOS[mode]['description']}")
+    scenario = get_scenario(mode)
+    if scenario is not None:
+        tasks = scenario["tasks"]
+        print(f"Goal: {scenario['description']}")
 
     else:
         # 1. Parse robot count from mode (e.g., N10 -> 10)
