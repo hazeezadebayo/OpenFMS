@@ -89,6 +89,9 @@ class FmTrafficHandler():
         self.wait_time_default = 10.5 # [secs]
         self.mutex_groups = [] # Store list of lists e.g. [['C1', 'C2'], ['C10', 'C11']]
         self.collision_tracker = 0
+        # Telemetry (R2-6): in-memory negotiation/plan counters only — no I/O, no locks.
+        self._tele = {"plans": 0, "reroute_true": 0, "reroute_false": 0,
+                      "relocate_fail": 0, "cycle_break": 0}
         self.robots_in_collision = set()
         # Last-resort cycle-break state: r_id -> (base, horizon0, since_epoch).
         # Consulted ONLY after relocate/reroute/verified-redirect already failed.
@@ -1012,6 +1015,11 @@ class FmTrafficHandler():
 
     def publish_route_plan(self, plan: RoutePlan):
         """Core public entrypoint. Processes and dispatches a complete RoutePlan."""
+        # Telemetry (R2-6): guarded, never blocks dispatch.
+        try:
+            self._tele["plans"] += 1
+        except Exception:
+            pass
 
         logger.debug("\033[93m DEBUG ----------------- 🛸 6 🛸 ----------------- \033[0m")
         # print(f"\033[93m DEBUG ------- 🛸 {plan} 🛸 ------- \033[0m")
@@ -1175,6 +1183,10 @@ class FmTrafficHandler():
             if plan is not None:
                 robot_name = r_id if active_ctx == r_ctx else f"{mex_ctx.robot_id} (mex)"
                 logger.info(f"Fleet {f_id} <-> {robot_name} Reroute_status --> True (alternate path discovered).")
+                try:
+                    self._tele["reroute_true"] += 1
+                except Exception:
+                    pass
 
                 # Apply structural modifications mapping out the alternate path sequence
                 active_ctx.checkpoints, active_ctx.horizon = plan["checkpoints"], plan["horizon"]
@@ -1184,6 +1196,10 @@ class FmTrafficHandler():
                 return self._generate_dual_plans(f_id, r_id, m_id, v_id, r_ctx, mex_ctx, [r_ctx.base, r_ctx.checkpoints[1]], [mex_ctx.base, mex_ctx.checkpoints[1]])
 
         logger.info(f"Fleet {f_id} <-> {r_id} Reroute_status --> False.")
+        try:
+            self._tele["reroute_false"] += 1
+        except Exception:
+            pass
         return None, None
 
     # -------------------------------------------------------------- 
@@ -1203,6 +1219,10 @@ class FmTrafficHandler():
             if cy_id and self._verify_escape_chain(active_ctx, other_ctx, cy_id, traffic_control):
                 robot_name = r_id if active_ctx == r_ctx else f"{mex_ctx.robot_id} (mex)"
                 logger.info(f"Fleet {f_id} <-> {robot_name} Reroute_status --> True (temp wait + escape verified).")
+                try:
+                    self._tele["reroute_true"] += 1
+                except Exception:
+                    pass
 
                 # State mutation injection for safe wait zones
                 active_ctx.checkpoints.insert(1, cy_id)
@@ -1267,11 +1287,19 @@ class FmTrafficHandler():
                 self._hold_since.pop(active_ctx.robot_id, None)
                 logger.info(f"CYCLE_BREAK Fleet {f_id} <-> {rob_id}: 2-cycle broken via {cy_id} "
                             f"(was holding {active_ctx.base}, wanted {wanted_node}).")
+                try:
+                    self._tele["cycle_break"] += 1
+                except Exception:
+                    pass
                 if active_ctx == r_ctx:
                     return (y_plan, None)
                 return (None, y_plan)
 
         logger.info(f"Fleet {f_id} <-> {r_id} Reroute_status --> False.")
+        try:
+            self._tele["reroute_false"] += 1
+        except Exception:
+            pass
         return None, None
 
     # --------------------------------------------------------------
@@ -1498,6 +1526,10 @@ class FmTrafficHandler():
                 return self.handle_priority_lower(r_id, traffic_control, mex_wp, mex_ctx, r_wp, r_ctx, False)
             else:
                 logger.error(f"{mex_ctx.robot_id} mex --> dispatch blocked. Neither robot guarantees exit.")
+                try:
+                    self._tele["relocate_fail"] += 1
+                except Exception:
+                    pass
                 return None, None
 
         mex_est_time = self.estimate_time_to_node(robot_pos = r_ctx.agv_position,
@@ -1535,6 +1567,10 @@ class FmTrafficHandler():
                 return self.handle_priority_higher(r_id, traffic_control, mex_wp, mex_ctx, r_wp, r_ctx, False)
             else:
                 logger.error(f"{r_id} --> dispatch blocked. Neither robot guarantees exit.")
+                try:
+                    self._tele["relocate_fail"] += 1
+                except Exception:
+                    pass
                 return None, None
 
         r_est_time = self.estimate_time_to_node(robot_pos = mex_ctx.agv_position,

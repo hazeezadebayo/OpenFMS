@@ -809,6 +809,55 @@ class FmScheduleHandler():
                 f_id, m_id, cleared=True, task_type='transport', r_id=r_id)
             log_and_store(f"number of transport Orders fullfilled by robot {r_id}: {len(robot_orders)}.")
 
+        # ---------- TELEMETRY (R2-6: message/volume/load/replan evidence) ----------
+        # Cumulative in-memory counters; effective rates = count / run wall time (post-hoc).
+        # Every read is guarded: telemetry can never break analytics or the run.
+        try:
+            import json as _tjson
+            _sdir = os.path.dirname(os.path.abspath(__file__))
+            _ldir = os.path.join(os.path.dirname(_sdir), "logs")
+            _sim = {}
+            try:
+                with open(os.path.join(_ldir, "telemetry_sim.json"), "r", encoding="utf-8") as _f:
+                    _sim = _tjson.load(_f)
+            except Exception:
+                _sim = {}
+            _mt = {}
+            try:
+                _mt = dict(getattr(self.traffic_handler, "_tele", {}) or {})
+            except Exception:
+                _mt = {}
+            _cpu, _rss = 0.0, 0.0
+            try:
+                with open("/proc/self/stat", "r", encoding="utf-8") as _f:
+                    _p = _f.read().rsplit(")", 1)[1].split()
+                _cpu = (float(_p[11]) + float(_p[12])) / float(os.sysconf(os.sysconf_names["SC_CLK_TCK"]))
+            except Exception:
+                _cpu = 0.0
+            try:
+                with open("/proc/self/status", "r", encoding="utf-8") as _f:
+                    for _line in _f:
+                        if _line.startswith("VmRSS:"):
+                            _rss = float(_line.split()[1]) / 1024.0
+                            break
+            except Exception:
+                _rss = 0.0
+            log_and_store(f"telemetry sim state msgs: {_sim.get('total_state_n', 'unavailable')}.")
+            log_and_store(f"telemetry sim state bytes: {_sim.get('total_state_bytes', 'unavailable')}.")
+            log_and_store(f"telemetry sim uptime sec: {_sim.get('uptime_sec', 'unavailable')}.")
+            log_and_store(f"telemetry sim cpu sec: {_sim.get('proc_cpu_sec', 'unavailable')}.")
+            log_and_store(f"telemetry sim rss MB: {_sim.get('proc_rss_mb', 'unavailable')}.")
+            log_and_store(f"telemetry per-robot state: {_sim.get('robots', 'unavailable')}.")
+            log_and_store(f"telemetry route plans: {_mt.get('plans', 'unavailable')}.")
+            log_and_store(f"telemetry reroute true: {_mt.get('reroute_true', 'unavailable')}.")
+            log_and_store(f"telemetry reroute false: {_mt.get('reroute_false', 'unavailable')}.")
+            log_and_store(f"telemetry relocate failures: {_mt.get('relocate_fail', 'unavailable')}.")
+            log_and_store(f"telemetry cycle breaks: {_mt.get('cycle_break', 'unavailable')}.")
+            log_and_store(f"telemetry controller cpu sec: {round(_cpu, 2)}.")
+            log_and_store(f"telemetry controller rss MB: {round(_rss, 2)}.")
+        except Exception as _e:
+            log_and_store(f"telemetry unavailable: {_e}.")
+
         # ---------- FILE OUTPUT ----------
         if write_to_file:
             # logs_dir = os.path.abspath("logs")

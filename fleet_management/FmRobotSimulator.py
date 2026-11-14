@@ -149,6 +149,12 @@ class Robot():
         self.current_order_update_id = -1
         self.last_node_sequence_id = 0
 
+        # Telemetry (R2-6): in-memory publish counters only. Plain-int
+        # increments — no I/O, no locks, never blocks the publish path.
+        self._tele = {"state_n": 0, "state_bytes": 0, "conn_n": 0,
+                      "conn_bytes": 0, "fact_n": 0, "fact_bytes": 0,
+                      "order_rx": 0}
+
         # Initialize last published timestamps (using time.time())
         self.last_state_publish = time.time()
         self.last_connection_publish = time.time()
@@ -223,6 +229,11 @@ class Robot():
                     is_newer_update = (new_order_id == self.current_order_id and new_update_id > self.current_order_update_id)
 
                     if is_new_uuid or is_newer_update:
+                        # Telemetry (R2-6): count accepted orders; guarded, never blocks.
+                        try:
+                            self._tele["order_rx"] += 1
+                        except Exception:
+                            pass
                         self.current_order_id = new_order_id
                         self.current_order_update_id = new_update_id
                         self.order = message
@@ -596,7 +607,14 @@ class Robot():
         # declare the topic name
         topic = f"{self.fleetname}/{self.versions}/{self.manufacturer}/{self.robot_serial_number}/state"
         # Publish state message structure that will be validated, inserted into the database, ...
-        self.mqtt_client.publish(topic, json.dumps(state_message))
+        state_payload = json.dumps(state_message)
+        # Telemetry (R2-6): count msgs + bytes before publish; guarded, never blocks.
+        try:
+            self._tele["state_n"] += 1
+            self._tele["state_bytes"] += len(state_payload.encode("utf-8"))
+        except Exception:
+            pass
+        self.mqtt_client.publish(topic, state_payload)
         # Uncomment for debugging:
         # print(f"Published state for {self.robot_serial_number}: {state_message}")
 
@@ -612,7 +630,14 @@ class Robot():
             "connectionState": self.connection_state # ['ONLINE', 'OFFLINE', 'CONNECTIONBROKEN']
         }
         topic = f"{self.fleetname}/{self.versions}/{self.manufacturer}/{self.robot_serial_number}/connection"
-        self.mqtt_client.publish(topic, json.dumps(connection_message))
+        conn_payload = json.dumps(connection_message)
+        # Telemetry (R2-6): guarded, never blocks.
+        try:
+            self._tele["conn_n"] += 1
+            self._tele["conn_bytes"] += len(conn_payload.encode("utf-8"))
+        except Exception:
+            pass
+        self.mqtt_client.publish(topic, conn_payload)
         # Uncomment for debugging:
         # print(f"Published connection for {self.robot_serial_number}: {connection_message}")
 
@@ -711,7 +736,14 @@ class Robot():
             }
         }
         topic = f"{self.fleetname}/{self.versions}/{self.manufacturer}/{self.robot_serial_number}/factsheet"
-        self.mqtt_client.publish(topic, json.dumps(factsheet_message))
+        fact_payload = json.dumps(factsheet_message)
+        # Telemetry (R2-6): guarded, never blocks.
+        try:
+            self._tele["fact_n"] += 1
+            self._tele["fact_bytes"] += len(fact_payload.encode("utf-8"))
+        except Exception:
+            pass
+        self.mqtt_client.publish(topic, fact_payload)
         # Uncomment for debugging:
         # print(f"Published factsheet for {self.robot_serial_number}: {factsheet_message}")
 
@@ -903,6 +935,69 @@ def load_robots_custom(filepath):
         print(f"Error parsing robots.yaml: {e}")
     return robots
 
+def _proc_cpu_seconds():
+    """Cumulative user+sys CPU seconds of this process (0.0 on any failure)."""
+    try:
+        with open("/proc/self/stat", "r", encoding="utf-8") as f:
+            parts = f.read().rsplit(")", 1)[1].split()
+        utime, stime = float(parts[11]), float(parts[12])
+        return (utime + stime) / float(os.sysconf(os.sysconf_names["SC_CLK_TCK"]))
+    except Exception:
+        return 0.0
+
+
+def _proc_rss_mb():
+    """Resident set size of this process in MB (0.0 on any failure)."""
+    try:
+        with open("/proc/self/status", "r", encoding="utf-8") as f:
+            for line in f:
+                if line.startswith("VmRSS:"):
+                    return float(line.split()[1]) / 1024.0
+    except Exception:
+        pass
+    return 0.0
+
+
+def _telemetry_flusher(robots, sim_type, interval_sec=10.0):
+    """Background sidecar (R2-6): every `interval_sec`, aggregate the robots'
+    in-memory counters plus process CPU/RSS and atomically write
+    logs/telemetry_sim.json. Read-only w.r.t. robot state (plain-int reads);
+    never touches traffic logic. Any failure is swallowed — telemetry must
+    never kill the simulator."""
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    logs_dir = os.path.join(os.path.dirname(base_dir), "logs")
+    tmp_path = os.path.join(logs_dir, ".telemetry_sim.json")
+    final_path = os.path.join(logs_dir, "telemetry_sim.json")
+    t0 = time.time()
+    while True:
+        try:
+            time.sleep(interval_sec)
+            per_robot, tot_n, tot_b = {}, 0, 0
+            for r in robots:
+                try:
+                    t = r._tele
+                    per_robot[r.robot_serial_number] = dict(t)
+                    tot_n += t.get("state_n", 0)
+                    tot_b += t.get("state_bytes", 0)
+                except Exception:
+                    continue
+            doc = {"sim_type": sim_type, "uptime_sec": round(time.time() - t0, 1),
+                   "robots": per_robot, "total_state_n": tot_n,
+                   "total_state_bytes": tot_b,
+                   "proc_cpu_sec": round(_proc_cpu_seconds(), 2),
+                   "proc_rss_mb": round(_proc_rss_mb(), 2)}
+            os.makedirs(logs_dir, exist_ok=True)
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                json.dump(doc, f)
+            try:
+                os.chmod(tmp_path, 0o666)
+            except OSError:
+                pass
+            os.rename(tmp_path, final_path)
+        except Exception:
+            continue
+
+
 def main():
     """Main function to run multiple robot simulators."""
     
@@ -912,7 +1007,7 @@ def main():
     #   "throttled"     -> Dynamic publishing intervals based on activity
     #   "non_throttled" -> Fixed 1Hz publishing rate (the baseline)
     # -------------------------------------------------------------------------
-    sim_publish_type = "non_throttled"
+    sim_publish_type = "throttled"
     
     robots = []
 
@@ -956,6 +1051,14 @@ def main():
     else:
         print("No robot configurations found. Exiting.")
         return
+
+    # Telemetry sidecar (R2-6): aggregate-only background flush; no traffic logic touched.
+    # NOTE: standalone try/except — never attach an else clause here; the
+    # no-robots exit above belongs to `if robot_configurations`.
+    try:
+        threading.Thread(target=_telemetry_flusher, args=(robots, sim_publish_type), daemon=True).start()
+    except Exception:
+        pass
 
     # 4. Let robots run concurrently
     try:
