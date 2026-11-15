@@ -4,7 +4,11 @@ logger = logging.getLogger(__name__)
 
 
 import psycopg2, psycopg2.extras, psycopg2.pool
-import time, yaml, re, json, os, time, threading, ast
+import time, yaml, re, json, os, time, threading, ast, random
+# Seed the manager-side RNG explicitly (default preserves historic behavior).
+# FmSimGenerator seeds only the processes that import it (generate/scenario);
+# the manager never imports it, so seed here for full-stack seed control.
+random.seed(int(os.environ.get("OPENFMS_SEED", 43)))
 from pathlib import Path
 from FmScheduleHandler import FmScheduleHandler
 from paho.mqtt import client as mqtt_client

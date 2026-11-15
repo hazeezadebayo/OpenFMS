@@ -90,10 +90,21 @@ cmd_experiments() {
     if [ -n "$ARG_MODES" ]; then MODES="$ARG_MODES"; else MODES=${MODES:-"throttled non_throttled"}; fi
     TRIALS=${TRIALS:-1}
     TRIAL_START=${TRIAL_START:-1}
+    # Per-trial RNG seeds (workload variation). One word = reuse for all trials;
+    # otherwise must provide >= TRIALS words (trial t uses word t).
+    SEEDS=${SEEDS:-43}
+    _NW=$(echo "$SEEDS" | wc -w)
+    if [ "$_NW" -eq 1 ]; then
+        _S=$(echo "$SEEDS" | xargs); SEEDS=""
+        for _i in $(seq 1 "$TRIALS"); do SEEDS="$SEEDS $_S"; done
+        SEEDS=$(echo "$SEEDS" | xargs)
+    elif [ "$_NW" -lt "$TRIALS" ]; then
+        echo "❌ SEEDS has $_NW word(s) but TRIALS=$TRIALS (need 1 or >= TRIALS)."; exit 2
+    fi
     if [ "$TRIAL_START" -gt "$TRIALS" ]; then echo "❌ TRIAL_START ($TRIAL_START) > TRIALS ($TRIALS)."; exit 2; fi
     EXP_TIMEOUT=${EXP_TIMEOUT:-1400}
 
-    V2_DIR="logs/analytics/Open_fms_v2"
+    V2_DIR="${OUTDIR:-logs/analytics/Open_fms_v2}"
     mkdir -p "$V2_DIR/throttled" "$V2_DIR/non_throttled"
     MANIFEST="$V2_DIR/run_manifest.txt"
 
@@ -104,6 +115,7 @@ cmd_experiments() {
     echo "   Trials:   $TRIALS"
     echo "   Timeout:  ${EXP_TIMEOUT}s per run"
     echo "   Output:   $V2_DIR/{throttled,non_throttled}/R<N>_result_snapshot.txt"
+    echo "   Seeds:    $SEEDS (trial t uses word t)"
     echo "================================================================"
 
     echo "   Modes are applied by sed-patching fleet_management/FmRobotSimulator.py's hardcoded"
@@ -130,6 +142,9 @@ cmd_experiments() {
         for N in $SIZES; do
             for TRIAL in $(seq "$TRIAL_START" "$TRIALS"); do
                 SCENARIO="E${N}"
+                SEED=$(echo "$SEEDS" | cut -d' ' -f"$TRIAL")
+                export OPENFMS_SEED="$SEED"
+                echo "   🌱 seed=$SEED (trial $TRIAL/$TRIALS)"
                 echo ""
                 echo "================================================================"
                 echo "▶️  RUN: mode=$MODE  N=$N  trial=$TRIAL/$TRIALS   ($(date '+%F %T'))"
@@ -248,8 +263,9 @@ cmd_experiments() {
                     echo "wall_time_sec=$ELAPSED"
                     echo "timeout_sec=$EXP_TIMEOUT"
                     echo "sim_publish_type=$MODE"
+                    echo "seed=$SEED"
                 } > "$META_DEST"
-                echo "$(date '+%F %T') mode=$MODE N=$N trial=$TRIAL outcome=$OUTCOME wall=${ELAPSED}s collation=$COLLATED" >> "$MANIFEST"
+                echo "$(date '+%F %T') mode=$MODE N=$N trial=$TRIAL outcome=$OUTCOME wall=${ELAPSED}s collation=$COLLATED seed=$SEED" >> "$MANIFEST"
                 if [ "$COLLATED" != "OK" ]; then
                     echo "   ❌ Run logged as $OUTCOME but collation=$COLLATED — files kept, flagged, NOT silently trusted."
                 fi

@@ -15,7 +15,7 @@ import numpy as np
 import re
 
 
-RANDOM_SEED = 43
+RANDOM_SEED = int(os.environ.get("OPENFMS_SEED", 43))
 random.seed(RANDOM_SEED)
 
 
